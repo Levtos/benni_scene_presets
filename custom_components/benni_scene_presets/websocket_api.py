@@ -135,8 +135,68 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             )
         connection.send_result(msg["id"], {"applied_to": entity_ids})
 
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/list_looks",
+        }
+    )
+    def ws_list_looks(hass, connection, msg) -> None:
+        connection.send_result(msg["id"], file_utils.list_looks())
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/save_look",
+            vol.Optional("look_id"): str,
+            vol.Required("name"): str,
+            vol.Required("bindings"): [
+                {
+                    vol.Required("targets"): dict,
+                    vol.Required("scene_id"): str,
+                    vol.Optional("interval"): vol.Any(int, None),
+                    vol.Optional("transition"): vol.Any(int, None),
+                }
+            ],
+        }
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_save_look(hass, connection, msg) -> None:
+        bindings = []
+        for b in msg["bindings"]:
+            binding = {"targets": b["targets"], "scene_id": b["scene_id"]}
+            if b.get("interval") is not None:
+                binding["interval"] = b["interval"]
+            if b.get("transition") is not None:
+                binding["transition"] = b["transition"]
+            bindings.append(binding)
+
+        look = {
+            "id": msg.get("look_id") or str(uuid.uuid4()),
+            "name": msg["name"],
+            "bindings": bindings,
+        }
+        saved = await hass.async_add_executor_job(file_utils.save_look, look)
+        connection.send_result(msg["id"], saved)
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/delete_look",
+            vol.Required("look_id"): str,
+        }
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_delete_look(hass, connection, msg) -> None:
+        removed = await hass.async_add_executor_job(
+            file_utils.delete_look, msg["look_id"]
+        )
+        connection.send_result(msg["id"], {"deleted": removed})
+
     websocket_api.async_register_command(hass, ws_get_dynamic_scenes)
     websocket_api.async_register_command(hass, ws_list_presets)
     websocket_api.async_register_command(hass, ws_save_preset)
     websocket_api.async_register_command(hass, ws_delete_preset)
     websocket_api.async_register_command(hass, ws_apply_preview)
+    websocket_api.async_register_command(hass, ws_list_looks)
+    websocket_api.async_register_command(hass, ws_save_look)
+    websocket_api.async_register_command(hass, ws_delete_look)

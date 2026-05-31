@@ -14,6 +14,7 @@ VERSION = MANIFEST['version']
 CUSTOM_DIR = os.path.join(BASE_PATH, 'userdata/custom')
 CUSTOM_ASSETS_DIR = os.path.join(CUSTOM_DIR, 'assets')
 CUSTOM_PRESETS_PATH = os.path.join(CUSTOM_DIR, 'presets.json')
+LOOKS_PATH = os.path.join(CUSTOM_DIR, 'looks.json')
 
 os.makedirs(CUSTOM_ASSETS_DIR, exist_ok=True)
 
@@ -119,4 +120,81 @@ def delete_custom_preset(preset_id):
     return removed is not None
 
 
+# --- Looks (named compositions of scene bindings) ---------------------------
+#
+# A look binds light sets directly to scenes:
+#   {"id","name","bindings":[{"targets":{...},"scene_id","interval"?,"transition"?}]}
+# Like PRESET_DATA, LOOKS is mutated in place on reload.
+
+LOOKS = {"looks": []}
+
+
+def _read_looks():
+    if os.path.exists(LOOKS_PATH):
+        try:
+            with open(LOOKS_PATH, 'r', encoding='utf-8') as file:
+                return json.load(file)
+        except (json.JSONDecodeError, OSError) as e:
+            _LOGGER.error("Error loading looks: %s", e)
+    return {"looks": []}
+
+
+def _write_looks(data):
+    os.makedirs(CUSTOM_DIR, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=CUSTOM_DIR, suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as file:
+            json.dump(data, file, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, LOOKS_PATH)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+def reload_looks():
+    data = _read_looks()
+    LOOKS.clear()
+    LOOKS["looks"] = list(data.get("looks", []))
+    return LOOKS
+
+
+def list_looks():
+    return _read_looks()
+
+
+def get_look(look_id):
+    for look in LOOKS.get("looks", []):
+        if look.get("id") == look_id:
+            return look
+    return None
+
+
+def save_look(look):
+    data = _read_looks()
+    looks = data.setdefault("looks", [])
+
+    for index, existing in enumerate(looks):
+        if existing.get("id") == look.get("id"):
+            looks[index] = look
+            break
+    else:
+        looks.append(look)
+
+    _write_looks(data)
+    reload_looks()
+    return look
+
+
+def delete_look(look_id):
+    data = _read_looks()
+    looks = data.get("looks", [])
+    remaining = [item for item in looks if item.get("id") != look_id]
+    removed = len(remaining) != len(looks)
+    data["looks"] = remaining
+    _write_looks(data)
+    reload_looks()
+    return removed
+
+
 reload_preset_data()
+reload_looks()

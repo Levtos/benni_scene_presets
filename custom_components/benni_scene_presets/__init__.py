@@ -62,20 +62,12 @@ dynamic_scene_manager = DynamicSceneManager()
 async def async_setup(hass, config):
     async def apply_preset_service(call):
         preset_id = call.data.get(ATTR_SCENE_PRESET_ID)
-        targets = call.data.get(ATTR_TARGETS)
         brightness_override = call.data.get(ATTR_BRIGHTNESS)
         transition = call.data.get(ATTR_TRANSITION, 1)
         shuffle = call.data.get(ATTR_SHUFFLE, False)
         smart_shuffle = call.data.get(ATTR_SMART_SHUFFLE, False)
 
-        entity_ids = ensure_list(targets.get("entity_id"))
-        device_ids = ensure_list(targets.get("device_id"))
-        area_ids = ensure_list(targets.get("area_id"))
-        floor_ids = ensure_list(targets.get("floor_id"))
-        label_ids = ensure_list(targets.get("label_id"))
-
-
-        light_entity_ids = resolve_targets(hass, entity_ids, device_ids, area_ids, floor_ids, label_ids)
+        light_entity_ids = _resolve(call.data.get(ATTR_TARGETS))
 
         await apply_preset(
             hass,
@@ -182,17 +174,7 @@ async def async_setup(hass, config):
         dynamic_scene_manager.delete_by_id(scene_id)
 
     async def stop_dynamic_scenes_for_targets(call):
-        targets = call.data.get(ATTR_TARGETS)
-
-        entity_ids = ensure_list(targets.get("entity_id"))
-        device_ids = ensure_list(targets.get("device_id"))
-        area_ids = ensure_list(targets.get("area_id"))
-        floor_ids = ensure_list(targets.get("floor_id"))
-        label_ids = ensure_list(targets.get("label_id"))
-
-        light_entity_ids = resolve_targets(hass, entity_ids, device_ids, area_ids, floor_ids, label_ids)
-
-        for light_entity_id in light_entity_ids:
+        for light_entity_id in _resolve(call.data.get(ATTR_TARGETS)):
             dynamic_scene_manager.stop_all_for_entity_id(light_entity_id)
 
         return True

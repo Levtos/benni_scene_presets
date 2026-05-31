@@ -52,10 +52,14 @@ def _write_custom(data):
 
 
 def reload_preset_data():
-    """Rebuild the merged PRESET_DATA in place from bundled + custom presets."""
+    """Rebuild the merged PRESET_DATA in place from bundled + custom presets.
+
+    Keys are reassigned individually (no clear()) so a concurrent reader never
+    observes a momentarily empty dict. BUNDLED_DATA is static, so no stale keys
+    can accumulate.
+    """
     custom = _read_custom()
 
-    PRESET_DATA.clear()
     for key, value in BUNDLED_DATA.items():
         if key not in ("presets", "categories"):
             PRESET_DATA[key] = value
@@ -153,7 +157,6 @@ def _write_looks(data):
 
 def reload_looks():
     data = _read_looks()
-    LOOKS.clear()
     LOOKS["looks"] = list(data.get("looks", []))
     return LOOKS
 

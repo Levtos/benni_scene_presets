@@ -137,15 +137,25 @@ async def async_setup(hass, config):
         look_slug = look.get("slug")
         started = []
         for binding in look.get("bindings", []):
-            light_entity_ids = _resolve(binding.get("targets", {}))
-            if not light_entity_ids:
+            kind = binding.get("kind", "scene")
+
+            if kind == "effect":
+                # Generic service binding (e.g. aqara_advanced_lighting.
+                # set_dynamic_effect). Pass the configured targets straight
+                # through (not light-only resolved) so non-light services work.
+                service = binding.get("service")
+                raw_targets = ensure_list((binding.get("targets") or {}).get("entity_id"))
+                if service and "." in service and raw_targets:
+                    domain, svc = service.split(".", 1)
+                    data = dict(binding.get("data") or {})
+                    data["entity_id"] = raw_targets
+                    hass.async_create_task(
+                        hass.services.async_call(domain, svc, data, blocking=False)
+                    )
                 continue
 
-            kind = binding.get("kind", "scene")
-            if kind == "effect":
-                # Phase B placeholder: effect bindings (e.g. Aqara
-                # set_dynamic_effect) are stored but not executed yet.
-                _LOGGER.debug("apply_look: effect binding not implemented yet (phase B): %s", binding)
+            light_entity_ids = _resolve(binding.get("targets", {}))
+            if not light_entity_ids:
                 continue
 
             scene_ident = binding.get("scene") or binding.get("scene_id")
@@ -179,9 +189,19 @@ async def async_setup(hass, config):
         if not look:
             return
 
+        effect_off = []
         for binding in look.get("bindings", []):
-            for light_entity_id in _resolve(binding.get("targets", {})):
-                dynamic_scene_manager.stop_all_for_entity_id(light_entity_id)
+            if binding.get("kind") == "effect":
+                # Best-effort: turn the effect targets (e.g. the RGB ring) off.
+                effect_off += _resolve(binding.get("targets", {}))
+            else:
+                for light_entity_id in _resolve(binding.get("targets", {})):
+                    dynamic_scene_manager.stop_all_for_entity_id(light_entity_id)
+
+        if effect_off:
+            hass.async_create_task(
+                hass.services.async_call("light", "turn_off", {"entity_id": effect_off}, blocking=False)
+            )
 
     async def reset_userdata(call):
         # Stop everything, wipe custom scenes + looks, drop the look switches.

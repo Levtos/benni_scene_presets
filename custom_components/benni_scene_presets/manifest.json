@@ -1,0 +1,15 @@
+{
+    "domain": "benni_scene_presets",
+    "name": "Benni Scene Presets",
+    "after_dependencies": ["http"],
+    "codeowners": [
+        "@Levtos"
+    ],
+    "config_flow": true,
+    "documentation": "https://github.com/Levtos/benni_scene_presets",
+    "integration_type": "service",
+    "iot_class": "calculated",
+    "issue_tracker": "https://github.com/Levtos/benni_scene_presets/issues",
+    "requirements": [],
+    "version": "0.1.0"
+}

@@ -135,6 +135,7 @@ async def async_setup(hass, config):
             raise vol.Invalid(f"Look '{look_ident}' not found.")
 
         look_slug = look.get("slug")
+        dynamic_scene_manager.mark_look_active(look_slug)
         started = []
         for binding in look.get("bindings", []):
             kind = binding.get("kind", "scene")
@@ -146,6 +147,10 @@ async def async_setup(hass, config):
                 if aqara and aqara.get("service") and raw_targets:
                     data = dict(aqara.get("data") or {})
                     data["entity_id"] = raw_targets
+                    # Make the effect fire even if the light was off (only
+                    # set_dynamic_effect accepts turn_on; don't add it to others).
+                    if aqara["service"] == "set_dynamic_effect":
+                        data.setdefault("turn_on", True)
                     hass.async_create_task(
                         hass.services.async_call(AQARA_DOMAIN, aqara["service"], data, blocking=False)
                     )
@@ -201,6 +206,7 @@ async def async_setup(hass, config):
         if not look:
             return
 
+        dynamic_scene_manager.mark_look_inactive(look.get("slug"))
         effect_off = []
         for binding in look.get("bindings", []):
             kind = binding.get("kind")

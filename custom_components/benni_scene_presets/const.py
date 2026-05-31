@@ -16,6 +16,7 @@ SERVICE_STOP_DYNAMIC_SCENES_FOR_TARGETS = "stop_dynamic_scenes_for_targets"
 SERVICE_GET_DYNAMIC_SCENES = "get_dynamic_scenes"
 SERVICE_APPLY_LOOK = "apply_look"
 SERVICE_STOP_LOOK = "stop_look"
+SERVICE_RESET_USERDATA = "reset_userdata"
 
 # Scene/look identifier on the wire = human name or slug (no UUIDs).
 ATTR_SCENE_PRESET_ID = "preset"

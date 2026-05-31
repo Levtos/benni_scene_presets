@@ -174,3 +174,16 @@ stop_look:
       required: true
       selector:
         text: null
+
+reset_userdata:
+  name: "Reset user data"
+  description: >-
+    Deletes ALL custom scenes and looks (the userdata HACS keeps across
+    reinstalls). Use this to start from a clean slate. Cannot be undone.
+  fields:
+    delete_images:
+      name: "Delete images"
+      description: "Also delete uploaded scene images"
+      default: true
+      selector:
+        boolean:

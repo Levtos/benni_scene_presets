@@ -238,6 +238,31 @@ def save_look(look):
     return look
 
 
+def reset_userdata(delete_images=True):
+    """Wipe all custom scenes + looks (and optionally uploaded images).
+
+    HACS keeps the userdata directory across reinstalls (persistent_directory),
+    so this service is the supported way to start from a clean slate.
+    """
+    counts = {
+        "presets": len(_read_custom().get("presets", [])),
+        "looks": len(_read_looks().get("looks", [])),
+    }
+    _write_custom({"presets": [], "categories": []})
+    _write_looks({"looks": []})
+
+    if delete_images and os.path.isdir(CUSTOM_ASSETS_DIR):
+        for name in os.listdir(CUSTOM_ASSETS_DIR):
+            try:
+                os.remove(os.path.join(CUSTOM_ASSETS_DIR, name))
+            except OSError as e:
+                _LOGGER.warning("Could not remove image %s: %s", name, e)
+
+    reload_preset_data()
+    reload_looks()
+    return counts
+
+
 def delete_look(slug):
     data = _read_looks()
     looks = data.get("looks", [])

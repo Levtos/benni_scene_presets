@@ -3,6 +3,7 @@ import homeassistant.helpers.config_validation as cv
 import logging
 from homeassistant.core import HomeAssistant, SupportsResponse
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from .const import *
 
 from .dynamic_scenes import DynamicScene, DynamicSceneManager
@@ -51,6 +52,10 @@ APPLY_LOOK_SCHEMA = vol.Schema({
 
 STOP_LOOK_SCHEMA = vol.Schema({
     vol.Required(ATTR_LOOK_ID): cv.string,
+})
+
+RESET_USERDATA_SCHEMA = vol.Schema({
+    vol.Optional("delete_images", default=True): cv.boolean,
 })
 
 
@@ -178,6 +183,15 @@ async def async_setup(hass, config):
             for light_entity_id in _resolve(binding.get("targets", {})):
                 dynamic_scene_manager.stop_all_for_entity_id(light_entity_id)
 
+    async def reset_userdata(call):
+        # Stop everything, wipe custom scenes + looks, drop the look switches.
+        dynamic_scene_manager.stop_all()
+        counts = await hass.async_add_executor_job(
+            file_utils.reset_userdata, call.data.get("delete_images", True)
+        )
+        async_dispatcher_send(hass, SIGNAL_LOOKS_CHANGED)
+        return counts
+
     async def stop_dynamic_scene(call):
         scene_id = call.data.get(ATTR_DYNAMIC_SCENE_ID)
 
@@ -251,6 +265,14 @@ async def async_setup(hass, config):
         SERVICE_STOP_LOOK,
         stop_look,
         schema=STOP_LOOK_SCHEMA
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RESET_USERDATA,
+        reset_userdata,
+        schema=RESET_USERDATA_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL
     )
 
 

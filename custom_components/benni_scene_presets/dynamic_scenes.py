@@ -142,6 +142,13 @@ class DynamicSceneManager:
         for scene_id in scenes_to_delete:
             del self.dynamic_scenes[scene_id]
 
+    def is_look_active(self, look_slug):
+        """True if any running scene was started as part of this look."""
+        return any(
+            scene._running and scene.parameters.get("look") == look_slug
+            for scene in self.dynamic_scenes.values()
+        )
+
     def get_all(self):
         return list(self.dynamic_scenes.values())
 

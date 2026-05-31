@@ -3,6 +3,11 @@ NAME = "Benni Scene Presets"
 
 PANEL_URL = "/benni_scene_presets_panel.js"
 
+PLATFORMS = ["switch"]
+# Dispatched after looks.json changes so the switch platform can add/remove
+# the per-look switch entities at runtime.
+SIGNAL_LOOKS_CHANGED = f"{DOMAIN}_looks_changed"
+
 SERVICE_APPLY_PRESET = "apply_preset"
 SERVICE_START_DYNAMIC_SCENE = "start_dynamic_scene"
 SERVICE_STOP_DYNAMIC_SCENE = "stop_dynamic_scene"

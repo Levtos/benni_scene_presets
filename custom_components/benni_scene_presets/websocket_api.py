@@ -1,7 +1,8 @@
 import voluptuous as vol
 from homeassistant.components import websocket_api
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import DOMAIN
+from .const import DOMAIN, SIGNAL_LOOKS_CHANGED
 from . import file_utils
 from .color_conversion import hex_to_xy
 from .presets import apply_colors
@@ -150,6 +151,7 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             look["slug"] = msg["slug"]
 
         saved = await hass.async_add_executor_job(file_utils.save_look, look)
+        async_dispatcher_send(hass, SIGNAL_LOOKS_CHANGED)
         connection.send_result(msg["id"], saved)
 
     @websocket_api.websocket_command(
@@ -162,6 +164,7 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
     @websocket_api.async_response
     async def ws_delete_look(hass, connection, msg) -> None:
         removed = await hass.async_add_executor_job(file_utils.delete_look, msg["slug"])
+        async_dispatcher_send(hass, SIGNAL_LOOKS_CHANGED)
         connection.send_result(msg["id"], {"deleted": removed})
 
     @websocket_api.websocket_command(

@@ -44,8 +44,8 @@ class BenniScenePresetsPanel extends HTMLElement {
 
   _blankScene() { return { slug: null, name: "", category: "", img: null, colors: ["#ff8800"], interval: 300, transition: 60, shuffle: true }; }
   _blankBinding() { return { kind: "scene", entity_ids: [], scene: "", interval: "", transition: "", aqara: "", service: "aqara_advanced_lighting.set_dynamic_effect", effect: "" }; }
-  _blankLook() { return { slug: null, name: "", bindings: [this._blankBinding()] }; }
-  _blankAqara() { return { slug: null, name: "", service: "start_dynamic_scene", preset: "", brightness: "" }; }
+  _blankLook() { return { slug: null, name: "", img: null, bindings: [this._blankBinding()] }; }
+  _blankAqara() { return { slug: null, name: "", img: null, service: "start_dynamic_scene", preset: "", brightness: "" }; }
 
   _loadFavs() { try { return new Set(JSON.parse(localStorage.getItem(FAV_KEY) || "[]")); } catch { return new Set(); } }
   _saveFavs() { localStorage.setItem(FAV_KEY, JSON.stringify([...this._favs])); }
@@ -190,13 +190,17 @@ class BenniScenePresetsPanel extends HTMLElement {
     if (!entity_id.length) { this._toast("Pick targets to preview on."); return; }
     try { await this._hass.callWS({ type: `${DOMAIN}/apply_preview`, targets: { entity_id }, colors, transition: 1 }); } catch (e) { this._toast(`Preview failed: ${e.message || e}`); }
   }
-  async _uploadImage(file) {
+  async _uploadImage(file, obj) {
     const form = new FormData(); form.append("file", file);
     try {
       const resp = await fetch(`/api/${DOMAIN}/upload_image`, { method: "POST", body: form, headers: { Authorization: `Bearer ${this._hass.auth.data.access_token}` } });
       if (!resp.ok) throw new Error(await resp.text());
-      const json = await resp.json(); this._editing.img = json.img; this._render(); this._toast("Image uploaded.");
+      const json = await resp.json(); (obj || this._editing).img = json.img; this._render(); this._toast("Image uploaded.");
     } catch (e) { this._toast(`Upload failed: ${e.message || e}`); }
+  }
+
+  _imgRow(obj) {
+    return `<div class="row"><label>Image</label><input type="file" class="f-img" accept="image/*">${obj.img ? `<img class="imgprev" src="/assets/${DOMAIN}/${obj.img}">` : ""}</div>`;
   }
 
   // ---- aqara CRUD ----------------------------------------------------------
@@ -213,12 +217,13 @@ class BenniScenePresetsPanel extends HTMLElement {
     if (a.brightness !== "" && a.brightness != null) data.brightness = Number(a.brightness);
     const msg = { type: `${DOMAIN}/save_aqara`, name: a.name.trim(), service: a.service, data };
     if (a.slug) msg.slug = a.slug;
+    if (a.img) msg.img = a.img;
     try { await this._hass.callWS(msg); this._toast("Aqara preset saved."); this._editingAqara = this._blankAqara(); this._view = "browse"; await this._refresh(); }
     catch (e) { this._toast(`Save failed: ${e.message || e}`); }
   }
   _editAqara(a) {
     const d = a.data || {};
-    this._editingAqara = { slug: a.slug, name: a.name || "", service: a.service || "start_dynamic_scene", preset: d.preset || "", brightness: d.brightness != null ? d.brightness : "" };
+    this._editingAqara = { slug: a.slug, name: a.name || "", img: a.img || null, service: a.service || "start_dynamic_scene", preset: d.preset || "", brightness: d.brightness != null ? d.brightness : "" };
     this._view = "aqara"; this._render();
   }
 
@@ -237,11 +242,12 @@ class BenniScenePresetsPanel extends HTMLElement {
     if (!bindings.length) { this._toast("Add at least one complete binding."); return; }
     const msg = { type: `${DOMAIN}/save_look`, name: l.name.trim(), bindings };
     if (l.slug) msg.slug = l.slug;
+    if (l.img) msg.img = l.img;
     try { await this._hass.callWS(msg); this._toast("Look saved."); this._editingLook = this._blankLook(); this._view = "browse"; await this._refresh(); }
     catch (e) { this._toast(`Save failed: ${e.message || e}`); }
   }
   _editLook(look) {
-    this._editingLook = { slug: look.slug, name: look.name || "",
+    this._editingLook = { slug: look.slug, name: look.name || "", img: look.img || null,
       bindings: (look.bindings || []).map((b) => ({ kind: b.kind || "scene", entity_ids: b.targets && b.targets.entity_id ? [].concat(b.targets.entity_id) : [], scene: b.scene || "", interval: b.interval != null ? b.interval : "", transition: b.transition != null ? b.transition : "", aqara: b.aqara || "", service: b.service || "aqara_advanced_lighting.set_dynamic_effect", effect: (b.data && b.data.effect) || "" })) };
     if (!this._editingLook.bindings.length) this._editingLook.bindings = [this._blankBinding()];
     this._view = "look"; this._render();
@@ -280,8 +286,8 @@ class BenniScenePresetsPanel extends HTMLElement {
   }
 
   _gradient(it) {
+    if (it.obj && it.obj.img) return `background-image:url('/assets/${DOMAIN}/${it.obj.img}')`;
     if (it.type === "custom") {
-      if (it.obj.img) return `background-image:url('/assets/${DOMAIN}/${it.obj.img}')`;
       const cols = (it.obj.lights || []).map((l) => l.hex).filter(Boolean);
       if (cols.length > 1) return `background:linear-gradient(135deg,${cols.join(",")})`;
       if (cols.length === 1) return `background:linear-gradient(135deg,${cols[0]},#00000066)`;
@@ -331,6 +337,11 @@ class BenniScenePresetsPanel extends HTMLElement {
       <div class="footer"><span>📦 ${this._items().length} presets</span><span class="${this._warnings() ? "warn" : ""}">⚠ ${this._warnings()} warning${this._warnings() === 1 ? "" : "s"}</span></div>
 
       ${this._selected ? this._renderDetail() : ""}
+      ${this._newOpen ? `<div class="overlay" id="newmodal"><div class="modal">
+        <h3>New preset</h3>
+        <div class="row"><label>Type</label><select id="nm-type"><option value="scene">Custom scene</option><option value="aqara">Aqara preset</option><option value="look">Look</option></select></div>
+        <div class="row" style="justify-content:flex-end;margin:0"><button class="secondary" id="nm-cancel">Cancel</button><button id="nm-create">Create</button></div>
+      </div></div>` : ""}
     `;
 
     const q = (id) => root.querySelector(id);
@@ -350,6 +361,12 @@ class BenniScenePresetsPanel extends HTMLElement {
       const dap = det.querySelector("#d-apply"); if (dap) dap.addEventListener("click", () => this._apply(this._selectedItem()));
       const ded = det.querySelector("#d-edit"); if (ded) ded.addEventListener("click", () => this._edit(this._selectedItem()));
       const dex = det.querySelector("#d-export"); if (dex) dex.addEventListener("click", () => this._exportScene(this._selectedItem().obj));
+    }
+    const nm = root.querySelector("#newmodal");
+    if (nm) {
+      nm.querySelector("#nm-cancel").addEventListener("click", () => { this._newOpen = false; this._render(); });
+      nm.querySelector("#nm-create").addEventListener("click", () => this._createNew(nm.querySelector("#nm-type").value));
+      nm.addEventListener("click", (e) => { if (e.target === nm) { this._newOpen = false; this._render(); } });
     }
   }
 
@@ -411,12 +428,12 @@ class BenniScenePresetsPanel extends HTMLElement {
       </div>`;
   }
 
-  _newPreset() {
-    const choice = (prompt("New preset type — type: scene / aqara / look", "scene") || "").trim().toLowerCase();
-    if (choice.startsWith("aq")) { this._editingAqara = this._blankAqara(); this._view = "aqara"; }
-    else if (choice.startsWith("lo")) { this._editingLook = this._blankLook(); this._view = "look"; }
-    else if (choice.startsWith("sc") || choice === "") { this._editing = this._blankScene(); this._view = "scene"; }
-    else return;
+  _newPreset() { this._newOpen = true; this._render(); }
+  _createNew(type) {
+    this._newOpen = false;
+    if (type === "aqara") { this._editingAqara = this._blankAqara(); this._view = "aqara"; }
+    else if (type === "look") { this._editingLook = this._blankLook(); this._view = "look"; }
+    else { this._editing = this._blankScene(); this._view = "scene"; }
     this._render();
   }
 
@@ -443,7 +460,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     q("#f-int").addEventListener("input", (e) => (s.interval = e.target.value));
     q("#f-trn").addEventListener("input", (e) => (s.transition = e.target.value));
     q("#f-shuf").addEventListener("change", (e) => (s.shuffle = e.target.checked));
-    q("#f-img").addEventListener("change", (e) => { if (e.target.files && e.target.files[0]) this._uploadImage(e.target.files[0]); });
+    q("#f-img").addEventListener("change", (e) => { if (e.target.files && e.target.files[0]) this._uploadImage(e.target.files[0], s); });
     q("#add-color").addEventListener("click", () => { if (s.colors.length < MAX_COLORS) { s.colors.push("#ffffff"); this._renderColors(); } });
     q("#b-save").addEventListener("click", () => this._saveScene());
     this._renderColors();
@@ -469,6 +486,7 @@ class BenniScenePresetsPanel extends HTMLElement {
       <div class="card">
         <div class="hint" style="margin-bottom:8px">Reference to an Aqara Advanced Lighting action. The preset list is read live from Aqara.</div>
         <div class="row"><label>Name</label><input type="text" id="aq-name" placeholder="display name" style="flex:1;min-width:220px"></div>
+        ${this._imgRow(a)}
         <div class="row"><label>Type</label><select id="aq-svc" style="min-width:220px">${services.map((x) => `<option value="${x.v}" ${a.service === x.v ? "selected" : ""}>${x.l}</option>`).join("")}</select></div>
         <div class="row"><label>Aqara preset</label>${noAal
           ? `<input type="text" id="aq-preset" placeholder="preset name" style="flex:1;min-width:240px"><span class="hint">AAL not detected — typing manually.</span>`
@@ -480,6 +498,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     q("#back").addEventListener("click", () => { this._view = "browse"; this._render(); });
     q("#aq-name").value = a.name; q("#aq-preset").value = a.preset; q("#aq-bri").value = a.brightness;
     q("#aq-name").addEventListener("input", (e) => (a.name = e.target.value));
+    { const fi = root.querySelector(".f-img"); if (fi) fi.addEventListener("change", (e) => { if (e.target.files && e.target.files[0]) this._uploadImage(e.target.files[0], a); }); }
     q("#aq-svc").addEventListener("change", (e) => { a.service = e.target.value; this._render(); });
     q("#aq-preset").addEventListener("change", (e) => (a.preset = e.target.value));
     q("#aq-preset").addEventListener("input", (e) => (a.preset = e.target.value));
@@ -492,6 +511,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     root.innerHTML = `${this._backBar(l.slug ? "Edit look" : "Create look")}
       <div class="card">
         <div class="row"><label>Name</label><input type="text" id="l-name" style="flex:1;min-width:200px"></div>
+        ${this._imgRow(l)}
         <div id="bindings"></div>
         <button class="secondary mini" id="add-b" style="margin:6px 0">+ Add binding</button>
         <div class="hint">Each binding = lights → a Scene, an Aqara preset, or a raw effect service.</div>
@@ -500,6 +520,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     root.querySelector("#back").addEventListener("click", () => { this._view = "browse"; this._render(); });
     root.querySelector("#l-name").value = l.name;
     root.querySelector("#l-name").addEventListener("input", (e) => (l.name = e.target.value));
+    { const fi = root.querySelector(".f-img"); if (fi) fi.addEventListener("change", (e) => { if (e.target.files && e.target.files[0]) this._uploadImage(e.target.files[0], l); }); }
     root.querySelector("#add-b").addEventListener("click", () => { l.bindings.push(this._blankBinding()); this._renderBindings(); });
     root.querySelector("#b-savelook").addEventListener("click", () => this._saveLook());
     this._renderBindings();
@@ -518,7 +539,7 @@ class BenniScenePresetsPanel extends HTMLElement {
         ${lights.map((x) => `<label class="tgt"><input type="checkbox" class="b-tgt" value="${x.id}" ${b.entity_ids.includes(x.id) ? "checked" : ""}> ${esc(x.label)}</label>`).join("")}
       </div>`;
       const sceneRows = `<div class="row"><label>Scene</label><select class="b-scene" style="min-width:220px"><option value="">– pick a scene –</option>${this._presets.map((p) => `<option value="${p.slug}" ${b.scene === p.slug ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>
-        <div class="row"><label>Interval</label><input type="number" class="b-int" placeholder="scene default" style="width:120px" value="${b.interval}"><label style="min-width:auto;margin-left:12px">Transition</label><input type="number" class="b-trn" placeholder="scene default" style="width:120px" value="${b.transition}"></div>`;
+        <div class="row"><label>Interval (s)</label><input type="number" class="b-int" placeholder="scene default" style="width:120px" value="${b.interval}"><label style="min-width:auto;margin-left:12px">Transition (s)</label><input type="number" class="b-trn" placeholder="scene default" style="width:120px" value="${b.transition}"></div>`;
       const aqaraRows = `<div class="row"><label>Aqara preset</label><select class="b-aqara" style="min-width:240px"><option value="">– pick –</option>${this._aqara.map((a) => `<option value="${a.slug}" ${b.aqara === a.slug ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></div>`;
       const effectRows = `<div class="row"><label>Service</label><input type="text" class="b-svc" style="flex:1;min-width:260px" value="${esc(b.service)}"></div><div class="row"><label>Effect</label><input type="text" class="b-eff" placeholder="effect name" style="min-width:200px" value="${esc(b.effect)}"></div>`;
       const rows = kind === "aqara" ? aqaraRows : kind === "effect" ? effectRows : sceneRows;
@@ -632,6 +653,9 @@ class BenniScenePresetsPanel extends HTMLElement {
       .color-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; } .color-row code { font-family:monospace; }
       .imgprev { width:120px; height:70px; object-fit:cover; border-radius:8px; }
       .hint { font-size:12px; color:var(--secondary-text-color); } .pad { padding:10px 2px; } .mono { font-family:monospace; }
+      .overlay { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:30; }
+      .modal { background:var(--card-background-color,#15181d); border:1px solid var(--divider-color,#2a2f37); border-radius:14px; padding:20px; min-width:320px; box-shadow:0 10px 40px rgba(0,0,0,.5); }
+      .modal h3 { margin:0 0 14px; }
       #toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#323232; color:#fff; padding:10px 18px; border-radius:8px; opacity:0; transition:opacity .2s; pointer-events:none; z-index:20; } #toast.show { opacity:1; }
     `;
   }

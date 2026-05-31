@@ -26,6 +26,18 @@ const slugify = (name) =>
   ((name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")) || "scene";
 const esc = (s) => (s == null ? "" : String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])));
 
+// Kelvin -> #rrggbb (Tanner Helland approximation), only for swatches/gradients.
+const kelvinToHex = (kelvin) => {
+  const k = Math.min(40000, Math.max(1000, kelvin)) / 100;
+  const bound = (v) => Math.min(255, Math.max(0, v));
+  const r = k <= 66 ? 255 : bound(329.698727446 * Math.pow(k - 60, -0.1332047592));
+  const g = k <= 66 ? bound(99.4708025861 * Math.log(k) - 161.1195681661)
+                    : bound(288.1221695283 * Math.pow(k - 60, -0.0755148492));
+  const b = k >= 66 ? 255 : k <= 19 ? 0 : bound(138.5177312231 * Math.log(k - 10) - 305.0447927307);
+  const h = (v) => Math.round(v).toString(16).padStart(2, "0");
+  return `#${h(r)}${h(g)}${h(b)}`;
+};
+
 class BenniScenePresetsPanel extends HTMLElement {
   constructor() {
     super();
@@ -64,7 +76,7 @@ class BenniScenePresetsPanel extends HTMLElement {
   }
   get hass() { return this._hass; }
 
-  _blankScene() { return { slug: null, name: "", category: "", img: null, colors: ["#ff8800"], interval: 300, transition: 60, shuffle: true }; }
+  _blankScene() { return { slug: null, name: "", category: "", img: null, mode: "color", colors: ["#ff8800"], kelvin: 3000, interval: 300, transition: 60, shuffle: true }; }
   _blankBinding() { return { kind: "scene", entity_ids: [], scene: "", interval: "", transition: "", aqara: "", service: "aqara_advanced_lighting.set_dynamic_effect", effect: "" }; }
   _blankLook() { return { slug: null, name: "", img: null, bindings: [this._blankBinding()] }; }
   _blankAqara() { return { slug: null, name: "", img: null, service: "start_dynamic_scene", preset: "", brightness: "" }; }
@@ -97,7 +109,7 @@ class BenniScenePresetsPanel extends HTMLElement {
   _typeLabel(t) { return t === "aqara" ? "Aqara preset" : t === "look" ? "Look" : "Custom preset"; }
 
   _isReady(it) {
-    if (it.type === "custom") return (it.obj.lights || []).length > 0;
+    if (it.type === "custom") return it.obj.kelvin != null || (it.obj.lights || []).length > 0;
     if (it.type === "aqara") return !!(it.obj.service && it.obj.data && it.obj.data.preset);
     if (it.type === "look") return (it.obj.bindings || []).length > 0;
     return true;
@@ -243,8 +255,14 @@ class BenniScenePresetsPanel extends HTMLElement {
   async _saveScene() {
     const s = this._editing;
     if (!s.name.trim()) { this._toast("Please enter a name."); return; }
-    if (!s.colors.length) { this._toast("Add at least one colour."); return; }
-    const msg = { type: `${DOMAIN}/save_preset`, name: s.name.trim(), category: s.category || null, colors: s.colors, interval: Number(s.interval), transition: Number(s.transition), shuffle: !!s.shuffle };
+    const msg = { type: `${DOMAIN}/save_preset`, name: s.name.trim(), category: s.category || null, interval: Number(s.interval), transition: Number(s.transition), shuffle: !!s.shuffle };
+    if (s.mode === "white") {
+      if (s.kelvin == null || s.kelvin === "") { this._toast("Pick a colour temperature."); return; }
+      msg.kelvin = Number(s.kelvin);
+    } else {
+      if (!s.colors.length) { this._toast("Add at least one colour."); return; }
+      msg.colors = s.colors;
+    }
     if (s.slug) msg.slug = s.slug;
     if (s.img) msg.img = s.img;
     try { await this._hass.callWS(msg); this._toast("Saved."); this._editing = this._blankScene(); this._view = "browse"; await this._refresh(); }
@@ -252,8 +270,11 @@ class BenniScenePresetsPanel extends HTMLElement {
   }
   async _deleteSceneSlug(slug) { try { await this._hass.callWS({ type: `${DOMAIN}/delete_preset`, slug }); this._toast("Deleted."); this._refresh(); } catch (e) { this._toast(`Delete failed: ${e.message || e}`); } }
   _editScene(p) {
+    const isKelvin = p.kelvin != null;
     this._editing = { slug: p.slug, name: p.name || "", category: p.category || "", img: p.img || null,
-      colors: (p.lights || []).map((l) => l.hex || "#ffffff"), interval: p.interval != null ? p.interval : 300, transition: p.transition != null ? p.transition : 60, shuffle: p.shuffle != null ? p.shuffle : true };
+      mode: isKelvin ? "white" : "color",
+      colors: (p.lights || []).map((l) => l.hex || "#ffffff"), kelvin: isKelvin ? p.kelvin : 3000,
+      interval: p.interval != null ? p.interval : 300, transition: p.transition != null ? p.transition : 60, shuffle: p.shuffle != null ? p.shuffle : true };
     if (!this._editing.colors.length) this._editing.colors = ["#ff8800"];
     this._view = "scene"; this._render();
   }
@@ -261,6 +282,11 @@ class BenniScenePresetsPanel extends HTMLElement {
     const entity_id = this._resolveTargets();
     if (!entity_id.length) { this._toast("Pick targets to preview on."); return; }
     try { await this._hass.callWS({ type: `${DOMAIN}/apply_preview`, targets: { entity_id }, colors, transition: 1 }); } catch (e) { this._toast(`Preview failed: ${e.message || e}`); }
+  }
+  async _previewKelvin(kelvin) {
+    const entity_id = this._resolveTargets();
+    if (!entity_id.length) { this._toast("Pick targets to preview on."); return; }
+    try { await this._hass.callWS({ type: `${DOMAIN}/apply_preview`, targets: { entity_id }, kelvin: Number(kelvin), transition: 1 }); } catch (e) { this._toast(`Preview failed: ${e.message || e}`); }
   }
   async _uploadImage(file, obj) {
     const form = new FormData(); form.append("file", file);
@@ -329,6 +355,7 @@ class BenniScenePresetsPanel extends HTMLElement {
 
   _exportScene(p) {
     const payload = { n: p.name, cat: p.category || "", c: (p.lights || []).map((l) => l.hex || "#ffffff"), i: p.interval, t: p.transition, s: p.shuffle };
+    if (p.kelvin != null) payload.k = p.kelvin;
     this._ioString = "BSP1:" + btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
     this._view = "io"; this._render(); this._toast("Export string ready below.");
   }
@@ -337,7 +364,11 @@ class BenniScenePresetsPanel extends HTMLElement {
       str = (str || "").trim();
       if (!str.startsWith("BSP1:")) throw new Error("Not a BSP1 string");
       const p = JSON.parse(decodeURIComponent(escape(atob(str.slice(5)))));
-      this._editing = { slug: null, name: p.n || "", category: p.cat || "", img: null, colors: (p.c && p.c.length ? p.c : ["#ff8800"]).slice(0, MAX_COLORS), interval: p.i != null ? p.i : 300, transition: p.t != null ? p.t : 60, shuffle: p.s != null ? p.s : true };
+      const isKelvin = p.k != null;
+      this._editing = { slug: null, name: p.n || "", category: p.cat || "", img: null,
+        mode: isKelvin ? "white" : "color",
+        colors: (p.c && p.c.length ? p.c : ["#ff8800"]).slice(0, MAX_COLORS), kelvin: isKelvin ? p.k : 3000,
+        interval: p.i != null ? p.i : 300, transition: p.t != null ? p.t : 60, shuffle: p.s != null ? p.s : true };
       this._view = "scene"; this._render(); this._toast("Imported — review and create.");
     } catch (e) { this._toast(`Import failed: ${e.message || e}`); }
   }
@@ -360,6 +391,7 @@ class BenniScenePresetsPanel extends HTMLElement {
   _gradient(it) {
     if (it.obj && it.obj.img) return `background-image:url('/assets/${DOMAIN}/${it.obj.img}')`;
     if (it.type === "custom") {
+      if (it.obj.kelvin != null) { const c = kelvinToHex(it.obj.kelvin); return `background:linear-gradient(135deg,${c},#00000066)`; }
       const cols = (it.obj.lights || []).map((l) => l.hex).filter(Boolean);
       if (cols.length > 1) return `background:linear-gradient(135deg,${cols.join(",")})`;
       if (cols.length === 1) return `background:linear-gradient(135deg,${cols[0]},#00000066)`;
@@ -477,12 +509,15 @@ class BenniScenePresetsPanel extends HTMLElement {
     const running = this._isRunning(it);
     let rows = "";
     if (it.type === "custom") {
-      const cols = (it.obj.lights || []).map((l) => l.hex).filter(Boolean);
+      const isKelvin = it.obj.kelvin != null;
+      const valueRow = isKelvin
+        ? `<div class="drow"><span>Kelvin</span><span class="sw-row"><i class="sw" style="background:${kelvinToHex(it.obj.kelvin)}"></i> ${it.obj.kelvin} K</span></div>`
+        : `<div class="drow"><span>Colours</span><span class="sw-row">${(it.obj.lights || []).map((l) => l.hex).filter(Boolean).map((c) => `<i class="sw" style="background:${c}"></i>`).join("")} ${(it.obj.lights || []).length}</span></div>`;
       rows = `
-        <div class="drow"><span>Type</span><b>Custom preset</b></div>
+        <div class="drow"><span>Type</span><b>Custom preset${isKelvin ? " (white)" : ""}</b></div>
         <div class="drow"><span>Targets</span><b>${esc(this._targetsLabel())}</b></div>
         <div class="drow"><span>Transition</span><b>${it.obj.transition != null ? it.obj.transition + "s" : "—"}</b></div>
-        <div class="drow"><span>Colours</span><span class="sw-row">${cols.map((c) => `<i class="sw" style="background:${c}"></i>`).join("")} ${cols.length}</span></div>`;
+        ${valueRow}`;
     } else if (it.type === "aqara") {
       rows = `
         <div class="drow"><span>Type</span><b>Aqara preset</b></div>
@@ -526,12 +561,19 @@ class BenniScenePresetsPanel extends HTMLElement {
 
   _renderSceneEditor(root) {
     const s = this._editing;
+    const white = s.mode === "white";
+    const paletteBlock = `<div class="row" style="align-items:flex-start"><label>Colours</label><div style="flex:1"><div id="colors"></div><button class="secondary mini" id="add-color" style="margin-top:6px">+ Add colour</button><span class="hint"> up to ${MAX_COLORS}; ▶ previews on the current targets</span></div></div>`;
+    const kelvinBlock = `<div class="row" style="align-items:flex-start"><label>Kelvin</label><div style="flex:1">
+        <div class="color-row"><input type="range" id="f-kelvin" min="2000" max="6500" step="100" value="${s.kelvin}"><code id="kelvin-val">${s.kelvin} K</code><i class="sw" id="kelvin-sw" style="background:${kelvinToHex(s.kelvin)}"></i><button class="mini" id="kelvin-prev" title="Preview">▶</button></div>
+        <span class="hint">One colour temperature for white-capable lights (e.g. the ceiling lights). ▶ previews on the current targets.</span>
+      </div></div>`;
     root.innerHTML = `${this._backBar(s.slug ? "Edit scene" : "Create scene")}
       <div class="card">
         <div class="row"><label>Name</label><input type="text" id="f-name" style="flex:1;min-width:200px"></div>
+        <div class="row"><label>Type</label><select id="f-mode" style="min-width:200px"><option value="color" ${white ? "" : "selected"}>Colour palette</option><option value="white" ${white ? "selected" : ""}>White (Kelvin)</option></select></div>
         <div class="row"><label>Category</label><input type="text" id="f-cat" list="cats" placeholder="e.g. Gaming" style="min-width:200px"><datalist id="cats">${this._categories().map((c) => `<option value="${esc(c)}">`).join("")}</datalist></div>
         <div class="row"><label>Image</label><input type="file" id="f-img" accept="image/*"><span id="imgprev">${s.img ? `<img class="imgprev" src="/assets/${DOMAIN}/${s.img}">` : ""}</span></div>
-        <div class="row" style="align-items:flex-start"><label>Colours</label><div style="flex:1"><div id="colors"></div><button class="secondary mini" id="add-color" style="margin-top:6px">+ Add colour</button><span class="hint"> up to ${MAX_COLORS}; ▶ previews on the current targets</span></div></div>
+        ${white ? kelvinBlock : paletteBlock}
         <div class="row"><label>Interval (s)</label><input type="number" id="f-int" min="0" max="3600" style="width:90px"><label style="min-width:auto;margin-left:12px">Transition (s)</label><input type="number" id="f-trn" min="0" max="300" style="width:90px"><label style="min-width:auto;margin-left:12px">Shuffle</label><input type="checkbox" id="f-shuf"></div>
         <div class="row" style="margin-top:8px"><button id="b-save">${s.slug ? "Update" : "Create"} scene</button></div>
       </div>`;
@@ -539,14 +581,20 @@ class BenniScenePresetsPanel extends HTMLElement {
     q("#back").addEventListener("click", () => { this._view = "browse"; this._render(); });
     q("#f-name").value = s.name; q("#f-cat").value = s.category; q("#f-int").value = s.interval; q("#f-trn").value = s.transition; q("#f-shuf").checked = !!s.shuffle;
     q("#f-name").addEventListener("input", (e) => (s.name = e.target.value));
+    q("#f-mode").addEventListener("change", (e) => { s.mode = e.target.value; this._render(); });
     q("#f-cat").addEventListener("input", (e) => (s.category = e.target.value));
     q("#f-int").addEventListener("input", (e) => (s.interval = e.target.value));
     q("#f-trn").addEventListener("input", (e) => (s.transition = e.target.value));
     q("#f-shuf").addEventListener("change", (e) => (s.shuffle = e.target.checked));
     q("#f-img").addEventListener("change", (e) => { if (e.target.files && e.target.files[0]) this._uploadImage(e.target.files[0], s); });
-    q("#add-color").addEventListener("click", () => { if (s.colors.length < MAX_COLORS) { s.colors.push("#ffffff"); this._renderColors(); } });
     q("#b-save").addEventListener("click", () => this._saveScene());
-    this._renderColors();
+    if (white) {
+      q("#f-kelvin").addEventListener("input", (e) => { s.kelvin = e.target.value; q("#kelvin-val").textContent = `${e.target.value} K`; q("#kelvin-sw").style.background = kelvinToHex(Number(e.target.value)); });
+      q("#kelvin-prev").addEventListener("click", () => this._previewKelvin(s.kelvin));
+    } else {
+      q("#add-color").addEventListener("click", () => { if (s.colors.length < MAX_COLORS) { s.colors.push("#ffffff"); this._renderColors(); } });
+      this._renderColors();
+    }
   }
   _renderColors() {
     const wrap = this.shadowRoot.getElementById("colors"); if (!wrap) return; const s = this._editing; wrap.innerHTML = "";

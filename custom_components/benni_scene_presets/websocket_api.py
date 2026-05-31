@@ -5,7 +5,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from .const import DOMAIN, SIGNAL_LOOKS_CHANGED
 from . import file_utils
 from .color_conversion import hex_to_xy
-from .presets import apply_colors
+from .presets import apply_colors, apply_kelvin
 from .util import ensure_list, resolve_targets
 
 
@@ -63,7 +63,10 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             vol.Required("name"): str,
             vol.Optional("category"): vol.Any(str, None),
             vol.Optional("img"): vol.Any(str, None),
-            vol.Required("colors"): [str],
+            # Colour scene: a palette of hex colours. Kelvin scene: a single
+            # colour temperature instead (colours are then ignored/empty).
+            vol.Optional("colors", default=[]): [str],
+            vol.Optional("kelvin"): vol.Any(int, None),
             vol.Optional("interval", default=300): vol.Coerce(int),
             vol.Optional("transition", default=60): vol.Coerce(int),
             vol.Optional("shuffle", default=True): bool,
@@ -72,19 +75,28 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
     @websocket_api.require_admin
     @websocket_api.async_response
     async def ws_save_preset(hass, connection, msg) -> None:
-        try:
-            lights = _colors_to_lights(msg["colors"])
-        except ValueError as err:
-            connection.send_error(msg["id"], "invalid_color", str(err))
-            return
+        kelvin = msg.get("kelvin")
 
         preset = {
             "name": msg["name"],
-            "lights": lights,
             "interval": msg["interval"],
             "transition": msg["transition"],
             "shuffle": msg["shuffle"],
         }
+
+        if kelvin is not None:
+            preset["kelvin"] = int(kelvin)
+            preset["lights"] = []
+        else:
+            if not msg["colors"]:
+                connection.send_error(msg["id"], "invalid_preset", "Provide colours or a kelvin value.")
+                return
+            try:
+                preset["lights"] = _colors_to_lights(msg["colors"])
+            except ValueError as err:
+                connection.send_error(msg["id"], "invalid_color", str(err))
+                return
+
         if msg.get("slug"):
             preset["slug"] = msg["slug"]
         if msg.get("category"):
@@ -222,6 +234,7 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             vol.Required("type"): f"{DOMAIN}/apply_preview",
             vol.Required("targets"): dict,
             vol.Optional("colors"): [str],
+            vol.Optional("kelvin"): vol.Any(int, None),
             vol.Optional("preset"): str,
             vol.Optional("transition", default=2): vol.Coerce(float),
             vol.Optional("brightness", default=200): vol.Coerce(int),
@@ -231,6 +244,18 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
     @websocket_api.async_response
     async def ws_apply_preview(hass, connection, msg) -> None:
         entity_ids = _resolve_target_entities(hass, msg["targets"])
+
+        # Kelvin preview (live from the editor slider, or a saved kelvin scene).
+        kelvin = msg.get("kelvin")
+        if kelvin is None and msg.get("preset"):
+            preset = file_utils.find_preset(msg["preset"])
+            if preset and preset.get("kelvin") is not None:
+                kelvin = preset["kelvin"]
+        if kelvin is not None:
+            if entity_ids:
+                await apply_kelvin(hass, int(kelvin), entity_ids, msg["transition"], msg["brightness"])
+            connection.send_result(msg["id"], {"applied_to": entity_ids})
+            return
 
         if msg.get("colors"):
             try:

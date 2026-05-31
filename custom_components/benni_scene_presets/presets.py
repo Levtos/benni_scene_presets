@@ -1,7 +1,7 @@
 import voluptuous as vol
 import asyncio
 import logging
-from .file_utils import PRESET_DATA
+from .file_utils import find_preset
 from .color_management import *
 from .color_temperature import find_closest_ct_match
 
@@ -77,21 +77,17 @@ async def apply_colors(
 
 async def apply_preset(
     hass,
-    preset_id,
+    preset_ident,
     light_entity_ids,
     transition,
     shuffle,
     smart_shuffle,
     brightness_override=None
 ):
-    preset_data = None
-    for preset in PRESET_DATA.get("presets", []):
-        if preset.get("id") == preset_id:
-            preset_data = preset
-            break
+    preset_data = find_preset(preset_ident)
 
     if not preset_data:
-        raise vol.Invalid(f"Preset '{preset_id}' not found.")
+        raise vol.Invalid(f"Preset '{preset_ident}' not found.")
 
     brightness = brightness_override if brightness_override else preset_data.get("bri", 255)
 

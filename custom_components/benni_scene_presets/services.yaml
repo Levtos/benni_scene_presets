@@ -2,10 +2,10 @@ apply_preset:
   name: "Apply preset"
   description: Apply a scene preset to specified light entities
   fields:
-    preset_id:
+    preset:
       name: "Preset"
-      description: "The preset ID to use"
-      example: "Rest"
+      description: "Scene name or slug"
+      example: "overwatch-talon"
       required: true
       selector:
         text: null
@@ -57,10 +57,10 @@ start_dynamic_scene:
   name: "Start dynamic scene"
   description: Start a loop that periodically applies a shuffled scene preset
   fields:
-    preset_id:
+    preset:
       name: "Preset"
-      description: "The preset ID to use"
-      example: "Rest"
+      description: "Scene name or slug"
+      example: "overwatch-talon"
       required: true
       selector:
         text: null
@@ -149,9 +149,9 @@ apply_look:
     scene on its own lights, so several scenes can run at once on different
     light sets.
   fields:
-    look_id:
+    look:
       name: "Look"
-      description: "The look ID to apply"
+      description: "Look name or slug"
       required: true
       selector:
         text: null
@@ -168,9 +168,9 @@ stop_look:
   name: "Stop look"
   description: Stops all dynamic scenes belonging to a look's lights
   fields:
-    look_id:
+    look:
       name: "Look"
-      description: "The look ID to stop"
+      description: "Look name or slug"
       required: true
       selector:
         text: null

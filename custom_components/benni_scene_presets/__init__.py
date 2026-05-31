@@ -139,10 +139,22 @@ async def async_setup(hass, config):
         for binding in look.get("bindings", []):
             kind = binding.get("kind", "scene")
 
+            if kind == "aqara":
+                # Named Aqara preset → call its AAL service on the targets.
+                aqara = file_utils.get_aqara(binding.get("aqara"))
+                raw_targets = ensure_list((binding.get("targets") or {}).get("entity_id"))
+                if aqara and aqara.get("service") and raw_targets:
+                    data = dict(aqara.get("data") or {})
+                    data["entity_id"] = raw_targets
+                    hass.async_create_task(
+                        hass.services.async_call(AQARA_DOMAIN, aqara["service"], data, blocking=False)
+                    )
+                continue
+
             if kind == "effect":
-                # Generic service binding (e.g. aqara_advanced_lighting.
-                # set_dynamic_effect). Pass the configured targets straight
-                # through (not light-only resolved) so non-light services work.
+                # Generic service binding (raw service + data — fallback/advanced).
+                # Pass the configured targets straight through (not light-only
+                # resolved) so non-light services work.
                 service = binding.get("service")
                 raw_targets = ensure_list((binding.get("targets") or {}).get("entity_id"))
                 if service and "." in service and raw_targets:
@@ -191,7 +203,16 @@ async def async_setup(hass, config):
 
         effect_off = []
         for binding in look.get("bindings", []):
-            if binding.get("kind") == "effect":
+            kind = binding.get("kind")
+            if kind == "aqara":
+                aqara = file_utils.get_aqara(binding.get("aqara"))
+                raw_targets = ensure_list((binding.get("targets") or {}).get("entity_id"))
+                if raw_targets:
+                    stop_svc = AQARA_STOP_SERVICES.get((aqara or {}).get("service"), "stop_dynamic_scene")
+                    hass.async_create_task(
+                        hass.services.async_call(AQARA_DOMAIN, stop_svc, {"entity_id": raw_targets}, blocking=False)
+                    )
+            elif kind == "effect":
                 # Best-effort: turn the effect targets (e.g. the RGB ring) off.
                 effect_off += _resolve(binding.get("targets", {}))
             else:

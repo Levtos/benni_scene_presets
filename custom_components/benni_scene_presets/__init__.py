@@ -90,7 +90,7 @@ async def async_setup(hass, config):
             ensure_list(targets.get("label_id")),
         )
 
-    def _start_scene(preset_id, light_entity_ids, interval, brightness, transition, initial_transition):
+    def _start_scene(preset_ident, light_entity_ids, interval, brightness, transition, initial_transition, look=None):
         # always stop any existing actions on these lights first
         for light_entity_id in light_entity_ids:
             dynamic_scene_manager.stop_all_for_entity_id(light_entity_id)
@@ -98,12 +98,13 @@ async def async_setup(hass, config):
         return dynamic_scene_manager.create_new(
             hass,
             {
-                "preset_id": preset_id,
                 "light_entity_ids": light_entity_ids,
-                "brightness": brightness,
-                "transition": transition,
-                "initial_transition": initial_transition,
-                "shuffle": True,
+                ATTR_SCENE_PRESET_ID: preset_ident,
+                ATTR_BRIGHTNESS: brightness,
+                ATTR_TRANSITION: transition,
+                ATTR_INITIAL_TRANSITION: initial_transition,
+                ATTR_SHUFFLE: True,
+                "look": look,  # slug of the look this scene belongs to (for the look switch)
             },
             interval
         )
@@ -121,27 +122,35 @@ async def async_setup(hass, config):
         )
 
     async def apply_look(call):
-        look_id = call.data.get(ATTR_LOOK_ID)
+        look_ident = call.data.get(ATTR_LOOK_ID)
         brightness = call.data.get(ATTR_BRIGHTNESS)
 
-        look = file_utils.get_look(look_id)
+        look = file_utils.get_look(look_ident)
         if not look:
-            raise vol.Invalid(f"Look '{look_id}' not found.")
+            raise vol.Invalid(f"Look '{look_ident}' not found.")
 
+        look_slug = look.get("slug")
         started = []
         for binding in look.get("bindings", []):
-            scene_id = binding.get("scene_id")
             light_entity_ids = _resolve(binding.get("targets", {}))
-            if not scene_id or not light_entity_ids:
+            if not light_entity_ids:
+                continue
+
+            kind = binding.get("kind", "scene")
+            if kind == "effect":
+                # Phase B placeholder: effect bindings (e.g. Aqara
+                # set_dynamic_effect) are stored but not executed yet.
+                _LOGGER.debug("apply_look: effect binding not implemented yet (phase B): %s", binding)
+                continue
+
+            scene_ident = binding.get("scene") or binding.get("scene_id")
+            if not scene_ident:
                 continue
 
             interval = binding.get("interval")
             transition = binding.get("transition")
             if interval is None or transition is None:
-                preset = next(
-                    (p for p in file_utils.PRESET_DATA.get("presets", []) if p.get("id") == scene_id),
-                    None,
-                )
+                preset = file_utils.find_preset(scene_ident)
                 if preset:
                     if interval is None:
                         interval = preset.get("interval", 60)
@@ -149,12 +158,13 @@ async def async_setup(hass, config):
                         transition = preset.get("transition", 1)
 
             started.append(_start_scene(
-                scene_id,
+                scene_ident,
                 light_entity_ids,
                 interval if interval is not None else 60,
                 brightness,
                 transition if transition is not None else 1,
                 None,
+                look_slug,
             ))
 
         return {"dynamic_scenes": started}

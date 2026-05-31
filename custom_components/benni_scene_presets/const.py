@@ -12,7 +12,8 @@ SERVICE_GET_DYNAMIC_SCENES = "get_dynamic_scenes"
 SERVICE_APPLY_LOOK = "apply_look"
 SERVICE_STOP_LOOK = "stop_look"
 
-ATTR_SCENE_PRESET_ID = "preset_id"
+# Scene/look identifier on the wire = human name or slug (no UUIDs).
+ATTR_SCENE_PRESET_ID = "preset"
 ATTR_TARGETS = "targets"
 ATTR_BRIGHTNESS = "brightness"
 ATTR_TRANSITION = "transition"
@@ -22,4 +23,4 @@ ATTR_SMART_SHUFFLE = "smart_shuffle"
 ATTR_INTERVAL = "interval"
 
 ATTR_DYNAMIC_SCENE_ID = "id"
-ATTR_LOOK_ID = "look_id"
+ATTR_LOOK_ID = "look"

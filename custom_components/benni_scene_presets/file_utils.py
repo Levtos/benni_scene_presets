@@ -1,9 +1,26 @@
 import json
 import os
+import re
 import tempfile
 import logging
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def slugify(name):
+    """Human name -> stable, script/YAML-safe slug. No UUIDs."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
+    return slug or "scene"
+
+
+def _unique_slug(base, taken):
+    """Return base, or base-2/base-3/... if already taken."""
+    if base not in taken:
+        return base
+    index = 2
+    while f"{base}-{index}" in taken:
+        index += 1
+    return f"{base}-{index}"
 
 BASE_PATH = os.path.dirname(os.path.realpath(__file__))
 MANIFEST = json.load(
@@ -79,13 +96,34 @@ def list_custom_presets():
     return _read_custom()
 
 
+def find_preset(ident):
+    """Resolve a scene by slug or by human name (no UUIDs)."""
+    if not ident:
+        return None
+    for preset in PRESET_DATA.get("presets", []):
+        if preset.get("slug") == ident or preset.get("name") == ident:
+            return preset
+    return None
+
+
 def save_custom_preset(preset):
-    """Upsert a single custom preset by id and reload the merged view."""
+    """Upsert a custom preset by slug and reload the merged view.
+
+    A new preset (no slug) gets a unique slug derived from its name. An edit
+    carries its existing slug, which stays frozen across renames so references
+    don't break.
+    """
     data = _read_custom()
     presets = data.setdefault("presets", [])
 
+    slug = preset.get("slug")
+    if not slug:
+        taken = {p.get("slug") for p in presets if p.get("slug")}
+        slug = _unique_slug(slugify(preset.get("name")), taken)
+        preset["slug"] = slug
+
     for index, existing in enumerate(presets):
-        if existing.get("id") == preset.get("id"):
+        if existing.get("slug") == slug:
             presets[index] = preset
             break
     else:
@@ -96,15 +134,15 @@ def save_custom_preset(preset):
     return preset
 
 
-def delete_custom_preset(preset_id):
-    """Remove a custom preset (and its uploaded image) by id."""
+def delete_custom_preset(slug):
+    """Remove a custom preset (and its uploaded image) by slug."""
     data = _read_custom()
     presets = data.get("presets", [])
 
     removed = None
     remaining = []
     for preset in presets:
-        if preset.get("id") == preset_id:
+        if preset.get("slug") == slug:
             removed = preset
         else:
             remaining.append(preset)
@@ -124,10 +162,13 @@ def delete_custom_preset(preset_id):
     return removed is not None
 
 
-# --- Looks (named compositions of scene bindings) ---------------------------
+# --- Looks (named compositions of scene/effect bindings) --------------------
 #
-# A look binds light sets directly to scenes:
-#   {"id","name","bindings":[{"targets":{...},"scene_id","interval"?,"transition"?}]}
+# A look binds light sets to scenes (and, in phase B, to effect services):
+#   {"slug","name","bindings":[
+#       {"kind":"scene",  "targets":{...}, "scene":<slug|name>, "interval"?, "transition"?},
+#       {"kind":"effect", "targets":{...}, "service":"domain.svc", "data":{...}}  # phase B
+#   ]}
 # Like PRESET_DATA, LOOKS is mutated in place on reload.
 
 LOOKS = {"looks": []}
@@ -165,9 +206,12 @@ def list_looks():
     return _read_looks()
 
 
-def get_look(look_id):
+def get_look(ident):
+    """Resolve a look by slug or by human name."""
+    if not ident:
+        return None
     for look in LOOKS.get("looks", []):
-        if look.get("id") == look_id:
+        if look.get("slug") == ident or look.get("name") == ident:
             return look
     return None
 
@@ -176,8 +220,14 @@ def save_look(look):
     data = _read_looks()
     looks = data.setdefault("looks", [])
 
+    slug = look.get("slug")
+    if not slug:
+        taken = {item.get("slug") for item in looks if item.get("slug")}
+        slug = _unique_slug(slugify(look.get("name")), taken)
+        look["slug"] = slug
+
     for index, existing in enumerate(looks):
-        if existing.get("id") == look.get("id"):
+        if existing.get("slug") == slug:
             looks[index] = look
             break
     else:
@@ -188,10 +238,10 @@ def save_look(look):
     return look
 
 
-def delete_look(look_id):
+def delete_look(slug):
     data = _read_looks()
     looks = data.get("looks", [])
-    remaining = [item for item in looks if item.get("id") != look_id]
+    remaining = [item for item in looks if item.get("slug") != slug]
     removed = len(remaining) != len(looks)
     data["looks"] = remaining
     _write_looks(data)

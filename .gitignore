@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# HACS persistent runtime data (user-created scenes/looks + uploaded images)
+custom_components/benni_scene_presets/userdata/
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

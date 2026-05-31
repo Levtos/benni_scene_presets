@@ -88,10 +88,10 @@ class BenniScenePresetsPanel extends HTMLElement {
 
   // Expand any benni_light_group sensor to its member entities; pass the rest
   // (lights, group.*) straight through — the backend resolves group.* itself.
-  _resolveTargets() {
+  _expandList(ids) {
     const states = this._hass.states || {};
     const out = [];
-    for (const id of this._targets) {
+    for (const id of ids) {
       if (id.startsWith("sensor.benni_light_group_")) {
         const members = states[id] && states[id].attributes && states[id].attributes.entity_id;
         if (members) out.push(...[].concat(members));
@@ -100,6 +100,10 @@ class BenniScenePresetsPanel extends HTMLElement {
       }
     }
     return [...new Set(out)];
+  }
+
+  _resolveTargets() {
+    return this._expandList(this._targets);
   }
 
   // ---- apply (browse) ------------------------------------------------------
@@ -223,13 +227,14 @@ class BenniScenePresetsPanel extends HTMLElement {
     const l = this._editingLook;
     if (!l.name.trim()) { this._toast("Name the look."); return; }
     const bindings = l.bindings.map((b) => {
+      const entity_id = this._expandList(b.entity_ids);
       if (b.kind === "effect") {
-        if (!b.entity_ids.length || !b.service || !b.effect) return null;
-        return { kind: "effect", targets: { entity_id: b.entity_ids }, service: b.service, data: { effect: b.effect } };
+        if (!entity_id.length || !b.service || !b.effect) return null;
+        return { kind: "effect", targets: { entity_id }, service: b.service, data: { effect: b.effect } };
       }
-      if (!b.entity_ids.length || !b.scene) return null;
+      if (!entity_id.length || !b.scene) return null;
       return {
-        kind: "scene", targets: { entity_id: b.entity_ids }, scene: b.scene,
+        kind: "scene", targets: { entity_id }, scene: b.scene,
         interval: b.interval === "" ? null : Number(b.interval),
         transition: b.transition === "" ? null : Number(b.transition),
       };
@@ -515,14 +520,19 @@ class BenniScenePresetsPanel extends HTMLElement {
     const wrap = this.shadowRoot.getElementById("bindings");
     if (!wrap) return;
     const l = this._editingLook;
-    const lights = this._lights();
+    const { groups, lights: tlights } = this._targetEntities();
+    const checkboxes = (b) => `<div class="targets-box" style="flex:1;min-width:240px">
+        ${groups.length ? `<div class="tgt-head">Groups</div>` : ""}
+        ${groups.map((g) => `<label class="tgt"><input type="checkbox" class="b-tgt" value="${g.id}" ${b.entity_ids.includes(g.id) ? "checked" : ""}> ${g.label} <span class="hint">(group)</span></label>`).join("")}
+        ${groups.length ? `<div class="tgt-head">Lights</div>` : ""}
+        ${tlights.map((l2) => `<label class="tgt"><input type="checkbox" class="b-tgt" value="${l2.id}" ${b.entity_ids.includes(l2.id) ? "checked" : ""}> ${l2.label}</label>`).join("")}
+      </div>`;
     wrap.innerHTML = "";
     l.bindings.forEach((b, idx) => {
       const card = document.createElement("div");
       card.className = "subcard";
       const isEffect = b.kind === "effect";
-      const lightsSelect = `<select multiple size="4" class="b-lights lights" style="flex:1;min-width:220px">
-        ${lights.map((id) => `<option value="${id}" ${b.entity_ids.includes(id) ? "selected" : ""}>${id}</option>`).join("")}</select>`;
+      const lightsSelect = checkboxes(b);
       const sceneRows = `
         <div class="row"><label>Scene</label>
           <select class="b-scene" style="min-width:220px"><option value="">– pick a scene –</option>
@@ -539,7 +549,11 @@ class BenniScenePresetsPanel extends HTMLElement {
         <div class="row" style="align-items:flex-start"><label>${isEffect ? "Targets" : "Lights"}</label>${lightsSelect}</div>
         ${isEffect ? effectRows : sceneRows}`;
       card.querySelector(".b-kind").addEventListener("change", (e) => { b.kind = e.target.value; this._renderBindings(); });
-      card.querySelector(".b-lights").addEventListener("change", (e) => { b.entity_ids = Array.from(e.target.selectedOptions).map((o) => o.value); });
+      card.querySelectorAll(".b-tgt").forEach((cb) => cb.addEventListener("change", (e) => {
+        const id = e.target.value;
+        if (e.target.checked) { if (!b.entity_ids.includes(id)) b.entity_ids.push(id); }
+        else { b.entity_ids = b.entity_ids.filter((x) => x !== id); }
+      }));
       card.querySelector(".b-rm").addEventListener("click", () => { l.bindings.splice(idx, 1); if (!l.bindings.length) l.bindings = [this._blankBinding()]; this._renderBindings(); });
       if (isEffect) {
         card.querySelector(".b-svc").addEventListener("input", (e) => (b.service = e.target.value));

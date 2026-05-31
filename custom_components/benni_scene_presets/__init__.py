@@ -265,7 +265,14 @@ async def async_setup_entry(
 
     async_setup_websocket_api(hass, dynamic_scene_manager)
 
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
     return True
+
+async def async_unload_entry(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> bool:
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 async def async_remove_entry(
     hass: HomeAssistant, entry: ConfigEntry

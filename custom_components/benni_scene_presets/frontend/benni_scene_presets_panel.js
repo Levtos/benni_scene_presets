@@ -41,8 +41,12 @@ class BenniScenePresetsPanel extends HTMLElement {
   _blankScene() {
     return { slug: null, name: "", category: "", img: null, colors: ["#ff8800"], interval: 300, transition: 60, shuffle: true };
   }
+  _blankBinding() {
+    return { kind: "scene", entity_ids: [], scene: "", interval: "", transition: "",
+      service: "aqara_advanced_lighting.set_dynamic_effect", effect: "" };
+  }
   _blankLook() {
-    return { slug: null, name: "", bindings: [{ entity_ids: [], scene: "", interval: "", transition: "" }] };
+    return { slug: null, name: "", bindings: [this._blankBinding()] };
   }
 
   _loadFavs() { try { return new Set(JSON.parse(localStorage.getItem(FAV_KEY) || "[]")); } catch { return new Set(); } }
@@ -69,12 +73,46 @@ class BenniScenePresetsPanel extends HTMLElement {
     return Object.keys(this._hass.states || {}).filter((id) => id.startsWith("light.")).sort();
   }
 
+  // Selectable targets: individual lights + light groups. Groups are either
+  // HA group.* entities or benni_core_devices' sensor.benni_light_group_* (whose
+  // members live in the entity_id attribute).
+  _targetEntities() {
+    const states = this._hass.states || {};
+    const groups = Object.keys(states)
+      .filter((id) => id.startsWith("group.") || id.startsWith("sensor.benni_light_group_"))
+      .sort()
+      .map((id) => ({ id, label: (states[id].attributes && states[id].attributes.friendly_name) || id, group: true }));
+    const lights = this._lights().map((id) => ({ id, label: id, group: false }));
+    return { groups, lights };
+  }
+
+  // Expand any benni_light_group sensor to its member entities; pass the rest
+  // (lights, group.*) straight through — the backend resolves group.* itself.
+  _expandList(ids) {
+    const states = this._hass.states || {};
+    const out = [];
+    for (const id of ids) {
+      if (id.startsWith("sensor.benni_light_group_")) {
+        const members = states[id] && states[id].attributes && states[id].attributes.entity_id;
+        if (members) out.push(...[].concat(members));
+      } else {
+        out.push(id);
+      }
+    }
+    return [...new Set(out)];
+  }
+
+  _resolveTargets() {
+    return this._expandList(this._targets);
+  }
+
   // ---- apply (browse) ------------------------------------------------------
 
   async _applyScene(scene) {
-    if (!this._targets.length) { this._toast("Pick one or more targets first."); return; }
+    const entity_id = this._resolveTargets();
+    if (!entity_id.length) { this._toast("Pick one or more targets first."); return; }
     const t = this._tunables;
-    const data = { targets: { entity_id: this._targets } };
+    const data = { targets: { entity_id } };
     if (t.customBri) data.brightness = Number(t.brightness);
     if (t.customTrans) data.transition = Number(t.transition);
     try {
@@ -131,7 +169,7 @@ class BenniScenePresetsPanel extends HTMLElement {
 
   async _quickLook(scene) {
     // One-binding look: all current targets (or all lights) -> this scene.
-    const ents = this._targets.length ? this._targets : this._lights();
+    const ents = this._targets.length ? this._resolveTargets() : this._lights();
     try {
       await this._hass.callWS({
         type: `${DOMAIN}/save_look`, name: scene.name,
@@ -161,9 +199,10 @@ class BenniScenePresetsPanel extends HTMLElement {
   }
 
   async _previewColors(colors) {
-    if (!this._targets.length) { this._toast("Pick a target to preview on."); return; }
+    const entity_id = this._resolveTargets();
+    if (!entity_id.length) { this._toast("Pick a target to preview on."); return; }
     try {
-      await this._hass.callWS({ type: `${DOMAIN}/apply_preview`, targets: { entity_id: this._targets }, colors, transition: 1 });
+      await this._hass.callWS({ type: `${DOMAIN}/apply_preview`, targets: { entity_id }, colors, transition: 1 });
     } catch (err) { this._toast(`Preview failed: ${err.message || err}`); }
   }
 
@@ -187,14 +226,20 @@ class BenniScenePresetsPanel extends HTMLElement {
   async _saveLook() {
     const l = this._editingLook;
     if (!l.name.trim()) { this._toast("Name the look."); return; }
-    const bindings = l.bindings
-      .filter((b) => b.entity_ids.length && b.scene)
-      .map((b) => ({
-        kind: "scene", targets: { entity_id: b.entity_ids }, scene: b.scene,
+    const bindings = l.bindings.map((b) => {
+      const entity_id = this._expandList(b.entity_ids);
+      if (b.kind === "effect") {
+        if (!entity_id.length || !b.service || !b.effect) return null;
+        return { kind: "effect", targets: { entity_id }, service: b.service, data: { effect: b.effect } };
+      }
+      if (!entity_id.length || !b.scene) return null;
+      return {
+        kind: "scene", targets: { entity_id }, scene: b.scene,
         interval: b.interval === "" ? null : Number(b.interval),
         transition: b.transition === "" ? null : Number(b.transition),
-      }));
-    if (!bindings.length) { this._toast("Add at least one binding (lights + scene)."); return; }
+      };
+    }).filter(Boolean);
+    if (!bindings.length) { this._toast("Add at least one complete binding."); return; }
     const msg = { type: `${DOMAIN}/save_look`, name: l.name.trim(), bindings };
     if (l.slug) msg.slug = l.slug;
     try {
@@ -215,14 +260,17 @@ class BenniScenePresetsPanel extends HTMLElement {
   _editLook(look) {
     this._editingLook = {
       slug: look.slug, name: look.name || "",
-      bindings: (look.bindings || []).filter((b) => (b.kind || "scene") === "scene").map((b) => ({
+      bindings: (look.bindings || []).map((b) => ({
+        kind: b.kind || "scene",
         entity_ids: b.targets && b.targets.entity_id ? [].concat(b.targets.entity_id) : [],
         scene: b.scene || b.scene_id || "",
         interval: b.interval != null ? b.interval : "",
         transition: b.transition != null ? b.transition : "",
+        service: b.service || "aqara_advanced_lighting.set_dynamic_effect",
+        effect: (b.data && b.data.effect) || "",
       })),
     };
-    if (!this._editingLook.bindings.length) this._editingLook.bindings = [{ entity_ids: [], scene: "", interval: "", transition: "" }];
+    if (!this._editingLook.bindings.length) this._editingLook.bindings = [this._blankBinding()];
     this._view = "look";
     this._render();
   }
@@ -269,7 +317,7 @@ class BenniScenePresetsPanel extends HTMLElement {
   }
 
   _renderBrowse(root) {
-    const lights = this._lights();
+    const { groups, lights } = this._targetEntities();
     root.innerHTML = `
       <div class="topbar">
         <h1>Benni Scene Presets</h1>
@@ -282,9 +330,13 @@ class BenniScenePresetsPanel extends HTMLElement {
 
       <div class="card">
         <div class="card-title">Targets</div>
-        <select multiple size="5" id="targets" class="lights">
-          ${lights.map((id) => `<option value="${id}" ${this._targets.includes(id) ? "selected" : ""}>${id}</option>`).join("")}
-        </select>
+        <div class="hint" style="margin-bottom:6px">Pick lights and/or groups (multiple allowed).</div>
+        <div id="targets" class="targets-box">
+          ${groups.length ? `<div class="tgt-head">Groups</div>` : ""}
+          ${groups.map((g) => `<label class="tgt"><input type="checkbox" data-tgt="${g.id}" ${this._targets.includes(g.id) ? "checked" : ""}> ${g.label} <span class="hint">(group)</span></label>`).join("")}
+          ${groups.length ? `<div class="tgt-head">Lights</div>` : ""}
+          ${lights.map((l) => `<label class="tgt"><input type="checkbox" data-tgt="${l.id}" ${this._targets.includes(l.id) ? "checked" : ""}> ${l.label}</label>`).join("")}
+        </div>
         <div class="card-title" style="margin-top:14px">Tunables <span class="hint">(for manual testing — brightness usually comes from the policy)</span></div>
         <div class="tun">
           <label><input type="checkbox" id="t-dyn" ${this._tunables.dynamic ? "checked" : ""}> Dynamic (cycle)</label>
@@ -301,8 +353,11 @@ class BenniScenePresetsPanel extends HTMLElement {
       ${this._renderLookSection()}
     `;
 
-    const ts = root.querySelector("#targets");
-    ts.addEventListener("change", (e) => { this._targets = Array.from(e.target.selectedOptions).map((o) => o.value); });
+    root.querySelectorAll("#targets [data-tgt]").forEach((cb) => cb.addEventListener("change", (e) => {
+      const id = e.target.dataset.tgt;
+      if (e.target.checked) { if (!this._targets.includes(id)) this._targets.push(id); }
+      else { this._targets = this._targets.filter((x) => x !== id); }
+    }));
     const bind = (id, ev, fn) => root.querySelector(id).addEventListener(ev, fn);
     bind("#a-scene", "click", () => { this._editing = this._blankScene(); this._view = "scene"; this._render(); });
     bind("#a-look", "click", () => { this._editingLook = this._blankLook(); this._view = "look"; this._render(); });
@@ -450,13 +505,13 @@ class BenniScenePresetsPanel extends HTMLElement {
         <div class="row"><label>Name</label><input type="text" id="l-name" style="flex:1;min-width:200px"></div>
         <div id="bindings"></div>
         <button class="secondary mini" id="add-b" style="margin:6px 0">+ Add binding</button>
-        <div class="hint">Effect bindings (Aqara RGB ring, …) come in phase 2.</div>
+        <div class="hint">A binding is either a scene on some lights, or an effect service (e.g. the Aqara RGB ring).</div>
         <div class="row" style="margin-top:8px"><button id="b-savelook">${l.slug ? "Update" : "Create"} look</button></div>
       </div>`;
     root.querySelector("#back").addEventListener("click", () => { this._view = "browse"; this._render(); });
     root.querySelector("#l-name").value = l.name;
     root.querySelector("#l-name").addEventListener("input", (e) => (l.name = e.target.value));
-    root.querySelector("#add-b").addEventListener("click", () => { l.bindings.push({ entity_ids: [], scene: "", interval: "", transition: "" }); this._renderBindings(); });
+    root.querySelector("#add-b").addEventListener("click", () => { l.bindings.push(this._blankBinding()); this._renderBindings(); });
     root.querySelector("#b-savelook").addEventListener("click", () => this._saveLook());
     this._renderBindings();
   }
@@ -465,26 +520,49 @@ class BenniScenePresetsPanel extends HTMLElement {
     const wrap = this.shadowRoot.getElementById("bindings");
     if (!wrap) return;
     const l = this._editingLook;
-    const lights = this._lights();
+    const { groups, lights: tlights } = this._targetEntities();
+    const checkboxes = (b) => `<div class="targets-box" style="flex:1;min-width:240px">
+        ${groups.length ? `<div class="tgt-head">Groups</div>` : ""}
+        ${groups.map((g) => `<label class="tgt"><input type="checkbox" class="b-tgt" value="${g.id}" ${b.entity_ids.includes(g.id) ? "checked" : ""}> ${g.label} <span class="hint">(group)</span></label>`).join("")}
+        ${groups.length ? `<div class="tgt-head">Lights</div>` : ""}
+        ${tlights.map((l2) => `<label class="tgt"><input type="checkbox" class="b-tgt" value="${l2.id}" ${b.entity_ids.includes(l2.id) ? "checked" : ""}> ${l2.label}</label>`).join("")}
+      </div>`;
     wrap.innerHTML = "";
     l.bindings.forEach((b, idx) => {
       const card = document.createElement("div");
       card.className = "subcard";
-      card.innerHTML = `
-        <div class="row" style="align-items:flex-start"><label>Lights</label>
-          <select multiple size="4" class="b-lights lights" style="flex:1;min-width:220px">
-            ${lights.map((id) => `<option value="${id}" ${b.entity_ids.includes(id) ? "selected" : ""}>${id}</option>`).join("")}</select></div>
+      const isEffect = b.kind === "effect";
+      const lightsSelect = checkboxes(b);
+      const sceneRows = `
         <div class="row"><label>Scene</label>
           <select class="b-scene" style="min-width:220px"><option value="">– pick a scene –</option>
             ${this._presets.map((p) => `<option value="${p.slug}" ${b.scene === p.slug ? "selected" : ""}>${p.name || "(unnamed)"}</option>`).join("")}</select></div>
         <div class="row"><label>Interval (s)</label><input type="number" class="b-int" min="0" max="3600" placeholder="scene default" style="width:130px" value="${b.interval}">
-          <label style="min-width:auto;margin-left:12px">Transition (s)</label><input type="number" class="b-trn" min="0" max="300" placeholder="scene default" style="width:130px" value="${b.transition}">
-          <button class="mini danger b-rm" style="margin-left:auto">remove</button></div>`;
-      card.querySelector(".b-lights").addEventListener("change", (e) => { b.entity_ids = Array.from(e.target.selectedOptions).map((o) => o.value); });
-      card.querySelector(".b-scene").addEventListener("change", (e) => (b.scene = e.target.value));
-      card.querySelector(".b-int").addEventListener("input", (e) => (b.interval = e.target.value));
-      card.querySelector(".b-trn").addEventListener("input", (e) => (b.transition = e.target.value));
-      card.querySelector(".b-rm").addEventListener("click", () => { l.bindings.splice(idx, 1); if (!l.bindings.length) l.bindings = [{ entity_ids: [], scene: "", interval: "", transition: "" }]; this._renderBindings(); });
+          <label style="min-width:auto;margin-left:12px">Transition (s)</label><input type="number" class="b-trn" min="0" max="300" placeholder="scene default" style="width:130px" value="${b.transition}"></div>`;
+      const effectRows = `
+        <div class="row"><label>Service</label><input type="text" class="b-svc" style="flex:1;min-width:260px" value="${b.service || ""}"></div>
+        <div class="row"><label>Effect</label><input type="text" class="b-eff" placeholder="effect name (Aqara)" style="min-width:200px" value="${b.effect || ""}"></div>`;
+      card.innerHTML = `
+        <div class="row"><label>Type</label>
+          <select class="b-kind"><option value="scene" ${isEffect ? "" : "selected"}>Scene</option><option value="effect" ${isEffect ? "selected" : ""}>Effect (service)</option></select>
+          <button class="mini danger b-rm" style="margin-left:auto">remove</button></div>
+        <div class="row" style="align-items:flex-start"><label>${isEffect ? "Targets" : "Lights"}</label>${lightsSelect}</div>
+        ${isEffect ? effectRows : sceneRows}`;
+      card.querySelector(".b-kind").addEventListener("change", (e) => { b.kind = e.target.value; this._renderBindings(); });
+      card.querySelectorAll(".b-tgt").forEach((cb) => cb.addEventListener("change", (e) => {
+        const id = e.target.value;
+        if (e.target.checked) { if (!b.entity_ids.includes(id)) b.entity_ids.push(id); }
+        else { b.entity_ids = b.entity_ids.filter((x) => x !== id); }
+      }));
+      card.querySelector(".b-rm").addEventListener("click", () => { l.bindings.splice(idx, 1); if (!l.bindings.length) l.bindings = [this._blankBinding()]; this._renderBindings(); });
+      if (isEffect) {
+        card.querySelector(".b-svc").addEventListener("input", (e) => (b.service = e.target.value));
+        card.querySelector(".b-eff").addEventListener("input", (e) => (b.effect = e.target.value));
+      } else {
+        card.querySelector(".b-scene").addEventListener("change", (e) => (b.scene = e.target.value));
+        card.querySelector(".b-int").addEventListener("input", (e) => (b.interval = e.target.value));
+        card.querySelector(".b-trn").addEventListener("input", (e) => (b.transition = e.target.value));
+      }
       wrap.appendChild(card);
     });
   }
@@ -534,6 +612,11 @@ class BenniScenePresetsPanel extends HTMLElement {
       .star { position:absolute; top:6px; right:8px; font-size:20px; color:rgba(255,255,255,.5); cursor:pointer; text-shadow:0 1px 3px rgba(0,0,0,.7); }
       .star.on { color:#ffd54a; }
       .lights { padding:6px; border-radius:8px; border:1px solid var(--divider-color,#444); background:var(--card-background-color,#1c1c1c); color:var(--primary-text-color); width:100%; box-sizing:border-box; }
+      .targets-box { max-height:220px; overflow:auto; border:1px solid var(--divider-color,#444); border-radius:8px; padding:8px; }
+      .tgt { display:flex; align-items:center; gap:8px; padding:3px 4px; font-size:14px; cursor:pointer; color:var(--primary-text-color); }
+      .tgt:hover { background:var(--secondary-background-color,#262626); border-radius:6px; }
+      .tgt input { min-width:auto; }
+      .tgt-head { font-size:12px; font-weight:600; color:var(--secondary-text-color); margin:8px 2px 2px; }
       .tun { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
       .tun label { display:flex; gap:6px; align-items:center; }
       .row { display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }

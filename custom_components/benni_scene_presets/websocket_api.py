@@ -52,7 +52,9 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
         }
     )
     def ws_list_looks(hass, connection, msg) -> None:
-        connection.send_result(msg["id"], file_utils.list_looks())
+        # In-memory cache (kept current on save/delete) — avoids a blocking
+        # file read in the event loop.
+        connection.send_result(msg["id"], file_utils.LOOKS)
 
     @websocket_api.websocket_command(
         {

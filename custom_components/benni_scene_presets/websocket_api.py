@@ -114,6 +114,7 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             vol.Required("type"): f"{DOMAIN}/save_look",
             vol.Optional("slug"): str,
             vol.Required("name"): str,
+            vol.Optional("img"): vol.Any(str, None),
             vol.Required("bindings"): [
                 {
                     vol.Optional("kind", default="scene"): str,
@@ -155,6 +156,8 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
         look = {"name": msg["name"], "bindings": bindings}
         if msg.get("slug"):
             look["slug"] = msg["slug"]
+        if msg.get("img"):
+            look["img"] = msg["img"]
 
         saved = await hass.async_add_executor_job(file_utils.save_look, look)
         async_dispatcher_send(hass, SIGNAL_LOOKS_CHANGED)
@@ -188,6 +191,7 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             vol.Required("name"): str,
             vol.Required("service"): str,
             vol.Optional("data"): vol.Any(dict, None),
+            vol.Optional("img"): vol.Any(str, None),
         }
     )
     @websocket_api.require_admin
@@ -196,6 +200,8 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
         preset = {"name": msg["name"], "service": msg["service"], "data": msg.get("data") or {}}
         if msg.get("slug"):
             preset["slug"] = msg["slug"]
+        if msg.get("img"):
+            preset["img"] = msg["img"]
         saved = await hass.async_add_executor_job(file_utils.save_aqara, preset)
         connection.send_result(msg["id"], saved)
 

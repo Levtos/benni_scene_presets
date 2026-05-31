@@ -141,3 +141,36 @@ stop_dynamic_scenes_for_targets:
 stop_all_dynamic_scenes:
   name: "Stop all dynamic scenes"
   description: Stops all currently running dynamic scenes
+
+apply_look:
+  name: "Apply look"
+  description: >-
+    Apply a named look. Each of the look's bindings starts its own dynamic
+    scene on its own lights, so several scenes can run at once on different
+    light sets.
+  fields:
+    look_id:
+      name: "Look"
+      description: "The look ID to apply"
+      required: true
+      selector:
+        text: null
+    brightness:
+      name: "Brightness"
+      description: "Brightness override applied to all bindings (usually supplied by the light policy / day phase)"
+      example: 200
+      selector:
+        number:
+          min: 0
+          max: 255
+
+stop_look:
+  name: "Stop look"
+  description: Stops all dynamic scenes belonging to a look's lights
+  fields:
+    look_id:
+      name: "Look"
+      description: "The look ID to stop"
+      required: true
+      selector:
+        text: null

@@ -13,7 +13,9 @@ class BenniScenePresetsPanel extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._initialized = false;
     this._presets = [];
+    this._looks = [];
     this._editing = this._blankScene();
+    this._editingLook = this._blankLook();
   }
 
   set hass(hass) {
@@ -41,6 +43,14 @@ class BenniScenePresetsPanel extends HTMLElement {
     };
   }
 
+  _blankLook() {
+    return {
+      look_id: null,
+      name: "",
+      bindings: [{ entity_ids: [], scene_id: "", interval: "", transition: "" }],
+    };
+  }
+
   // ---- data ----------------------------------------------------------------
 
   async _refresh() {
@@ -51,7 +61,14 @@ class BenniScenePresetsPanel extends HTMLElement {
       this._presets = [];
       this._toast(`Could not load scenes: ${err.message || err}`);
     }
+    try {
+      const data = await this._hass.callWS({ type: `${DOMAIN}/list_looks` });
+      this._looks = data.looks || [];
+    } catch (err) {
+      this._looks = [];
+    }
     this._renderList();
+    this._renderLookList();
   }
 
   async _save() {
@@ -154,6 +171,77 @@ class BenniScenePresetsPanel extends HTMLElement {
     return "#ffffff";
   }
 
+  // ---- looks ---------------------------------------------------------------
+
+  async _saveLook() {
+    const l = this._editingLook;
+    if (!l.name.trim()) {
+      this._toast("Name the look.");
+      return;
+    }
+    const bindings = l.bindings
+      .filter((b) => b.entity_ids.length && b.scene_id)
+      .map((b) => ({
+        targets: { entity_id: b.entity_ids },
+        scene_id: b.scene_id,
+        interval: b.interval === "" ? null : Number(b.interval),
+        transition: b.transition === "" ? null : Number(b.transition),
+      }));
+    if (!bindings.length) {
+      this._toast("Add at least one binding (lights + scene).");
+      return;
+    }
+    try {
+      const msg = { type: `${DOMAIN}/save_look`, name: l.name.trim(), bindings };
+      if (l.look_id) msg.look_id = l.look_id;
+      await this._hass.callWS(msg);
+      this._toast("Look saved.");
+      this._editingLook = this._blankLook();
+      this._renderLookEditor();
+      this._refresh();
+    } catch (err) {
+      this._toast(`Save failed: ${err.message || err}`);
+    }
+  }
+
+  async _deleteLook(lookId) {
+    if (!confirm("Delete this look?")) return;
+    try {
+      await this._hass.callWS({ type: `${DOMAIN}/delete_look`, look_id: lookId });
+      this._toast("Deleted.");
+      this._refresh();
+    } catch (err) {
+      this._toast(`Delete failed: ${err.message || err}`);
+    }
+  }
+
+  async _applyLook(lookId) {
+    try {
+      await this._hass.callService(DOMAIN, "apply_look", { look_id: lookId });
+      this._toast("Look applied.");
+    } catch (err) {
+      this._toast(`Apply failed: ${err.message || err}`);
+    }
+  }
+
+  _editLook(look) {
+    this._editingLook = {
+      look_id: look.id,
+      name: look.name || "",
+      bindings: (look.bindings || []).map((b) => ({
+        entity_ids: b.targets && b.targets.entity_id ? [].concat(b.targets.entity_id) : [],
+        scene_id: b.scene_id || "",
+        interval: b.interval != null ? b.interval : "",
+        transition: b.transition != null ? b.transition : "",
+      })),
+    };
+    if (!this._editingLook.bindings.length) {
+      this._editingLook.bindings = [{ entity_ids: [], scene_id: "", interval: "", transition: "" }];
+    }
+    this._renderLookEditor();
+    this.shadowRoot.getElementById("look-editor").scrollIntoView({ behavior: "smooth" });
+  }
+
   // ---- rendering -----------------------------------------------------------
 
   _renderShell() {
@@ -214,9 +302,17 @@ class BenniScenePresetsPanel extends HTMLElement {
       <h2 id="editor-title">Create scene</h2>
       <div class="card" id="editor"></div>
 
+      <h2>Your looks</h2>
+      <div class="hint" style="margin-bottom:8px">A look plays several scenes at once on different light sets (e.g. strips &rarr; one scene, bulbs &rarr; another).</div>
+      <div class="card"><div id="look-list"></div></div>
+
+      <h2 id="look-editor-title">Create look</h2>
+      <div class="card" id="look-editor"></div>
+
       <div id="toast"></div>
     `;
     this._renderEditor();
+    this._renderLookEditor();
   }
 
   _renderList() {
@@ -368,6 +464,136 @@ class BenniScenePresetsPanel extends HTMLElement {
     wrap.innerHTML = img
       ? `<img class="imgprev" src="/assets/${DOMAIN}/${img}" alt="">`
       : "";
+  }
+
+  _sceneName(sceneId) {
+    const p = this._presets.find((x) => x.id === sceneId);
+    return p ? p.name || "(unnamed)" : sceneId;
+  }
+
+  _renderLookList() {
+    const list = this.shadowRoot.getElementById("look-list");
+    if (!list) return;
+    if (!this._looks.length) {
+      list.innerHTML = `<div class="hint">No looks yet. Create one below.</div>`;
+      return;
+    }
+    list.innerHTML = "";
+    this._looks.forEach((look) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.style.justifyContent = "space-between";
+      const summary = (look.bindings || [])
+        .map((b) => {
+          const n = (b.targets && b.targets.entity_id ? [].concat(b.targets.entity_id).length : 0);
+          return `${n} light${n === 1 ? "" : "s"} &rarr; ${this._sceneName(b.scene_id)}`;
+        })
+        .join(" · ");
+      row.innerHTML = `
+        <div>
+          <span class="name"></span>
+          <div class="hint">${summary || "no bindings"}</div>
+        </div>
+        <div class="row" style="margin:0">
+          <button class="icon" data-act="apply">Apply</button>
+          <button class="icon secondary" data-act="edit">Edit</button>
+          <button class="icon danger" data-act="del">Delete</button>
+        </div>`;
+      row.querySelector(".name").textContent = look.name || "(unnamed)";
+      row.querySelector('[data-act="apply"]').addEventListener("click", () => this._applyLook(look.id));
+      row.querySelector('[data-act="edit"]').addEventListener("click", () => this._editLook(look));
+      row.querySelector('[data-act="del"]').addEventListener("click", () => this._deleteLook(look.id));
+      list.appendChild(row);
+    });
+  }
+
+  _renderLookEditor() {
+    const ed = this.shadowRoot.getElementById("look-editor");
+    if (!ed) return;
+    const l = this._editingLook;
+    this.shadowRoot.getElementById("look-editor-title").textContent = l.look_id
+      ? "Edit look"
+      : "Create look";
+
+    ed.innerHTML = `
+      <div class="row">
+        <label>Name</label>
+        <input type="text" id="l-name" style="flex:1; min-width:200px">
+      </div>
+      <div id="bindings"></div>
+      <button class="secondary icon" id="add-binding" style="margin:6px 0">+ Add binding</button>
+      <div class="row" style="margin-top:8px">
+        <button id="btn-save-look">${l.look_id ? "Update" : "Create"} look</button>
+        <button class="secondary" id="btn-cancel-look">Clear</button>
+      </div>`;
+
+    ed.querySelector("#l-name").value = l.name;
+    ed.querySelector("#l-name").addEventListener("input", (e) => (l.name = e.target.value));
+    ed.querySelector("#add-binding").addEventListener("click", () => {
+      l.bindings.push({ entity_ids: [], scene_id: "", interval: "", transition: "" });
+      this._renderBindings();
+    });
+    ed.querySelector("#btn-save-look").addEventListener("click", () => this._saveLook());
+    ed.querySelector("#btn-cancel-look").addEventListener("click", () => {
+      this._editingLook = this._blankLook();
+      this._renderLookEditor();
+    });
+
+    this._renderBindings();
+  }
+
+  _renderBindings() {
+    const wrap = this.shadowRoot.getElementById("bindings");
+    if (!wrap) return;
+    const l = this._editingLook;
+    const lights = Object.keys(this._hass.states || {})
+      .filter((id) => id.startsWith("light."))
+      .sort();
+
+    wrap.innerHTML = "";
+    l.bindings.forEach((b, idx) => {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.style.background = "var(--secondary-background-color, #f5f5f5)";
+      card.innerHTML = `
+        <div class="row" style="align-items:flex-start">
+          <label>Lights</label>
+          <select multiple size="4" class="b-lights" style="flex:1; min-width:220px">
+            ${lights
+              .map((id) => `<option value="${id}" ${b.entity_ids.includes(id) ? "selected" : ""}>${id}</option>`)
+              .join("")}
+          </select>
+        </div>
+        <div class="row">
+          <label>Scene</label>
+          <select class="b-scene" style="min-width:220px">
+            <option value="">- pick a scene -</option>
+            ${this._presets
+              .map((p) => `<option value="${p.id}" ${b.scene_id === p.id ? "selected" : ""}>${p.name || "(unnamed)"}</option>`)
+              .join("")}
+          </select>
+        </div>
+        <div class="row">
+          <label>Interval (s)</label>
+          <input type="number" class="b-interval" min="0" max="3600" placeholder="scene default" style="width:120px" value="${b.interval}">
+          <label style="min-width:auto; margin-left:12px">Transition (s)</label>
+          <input type="number" class="b-transition" min="0" max="300" placeholder="scene default" style="width:120px" value="${b.transition}">
+          <button class="icon danger b-remove" style="margin-left:auto">Remove binding</button>
+        </div>`;
+
+      card.querySelector(".b-lights").addEventListener("change", (e) => {
+        b.entity_ids = Array.from(e.target.selectedOptions).map((o) => o.value);
+      });
+      card.querySelector(".b-scene").addEventListener("change", (e) => (b.scene_id = e.target.value));
+      card.querySelector(".b-interval").addEventListener("input", (e) => (b.interval = e.target.value));
+      card.querySelector(".b-transition").addEventListener("input", (e) => (b.transition = e.target.value));
+      card.querySelector(".b-remove").addEventListener("click", () => {
+        l.bindings.splice(idx, 1);
+        if (!l.bindings.length) l.bindings = [{ entity_ids: [], scene_id: "", interval: "", transition: "" }];
+        this._renderBindings();
+      });
+      wrap.appendChild(card);
+    });
   }
 
   _toast(message) {

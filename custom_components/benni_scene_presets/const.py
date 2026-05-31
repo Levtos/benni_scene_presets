@@ -3,6 +3,11 @@ NAME = "Benni Scene Presets"
 
 PANEL_URL = "/benni_scene_presets_panel.js"
 
+PLATFORMS = ["switch"]
+# Dispatched after looks.json changes so the switch platform can add/remove
+# the per-look switch entities at runtime.
+SIGNAL_LOOKS_CHANGED = f"{DOMAIN}_looks_changed"
+
 SERVICE_APPLY_PRESET = "apply_preset"
 SERVICE_START_DYNAMIC_SCENE = "start_dynamic_scene"
 SERVICE_STOP_DYNAMIC_SCENE = "stop_dynamic_scene"
@@ -12,7 +17,8 @@ SERVICE_GET_DYNAMIC_SCENES = "get_dynamic_scenes"
 SERVICE_APPLY_LOOK = "apply_look"
 SERVICE_STOP_LOOK = "stop_look"
 
-ATTR_SCENE_PRESET_ID = "preset_id"
+# Scene/look identifier on the wire = human name or slug (no UUIDs).
+ATTR_SCENE_PRESET_ID = "preset"
 ATTR_TARGETS = "targets"
 ATTR_BRIGHTNESS = "brightness"
 ATTR_TRANSITION = "transition"
@@ -22,4 +28,4 @@ ATTR_SMART_SHUFFLE = "smart_shuffle"
 ATTR_INTERVAL = "interval"
 
 ATTR_DYNAMIC_SCENE_ID = "id"
-ATTR_LOOK_ID = "look_id"
+ATTR_LOOK_ID = "look"

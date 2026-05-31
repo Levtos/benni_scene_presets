@@ -459,23 +459,45 @@ class BenniScenePresetsPanel extends HTMLElement {
     return `<div class="section-title">Aqara presets</div><div class="grid">${tiles}</div>`;
   }
 
+  // Live preset options for an AAL service, read from hass.services (includes
+  // the user's own Aqara-app presets). Falls back to [] if AAL isn't loaded.
+  _aqaraPresetOptions(service) {
+    try {
+      const opts = this._hass.services.aqara_advanced_lighting[service].fields.preset.selector.select.options;
+      return (opts || []).map((o) => (typeof o === "string" ? { value: o, label: o } : o));
+    } catch {
+      return [];
+    }
+  }
+
   _renderAqaraEditor(root) {
     const a = this._editingAqara;
     const services = [
       { v: "start_dynamic_scene", l: "Dynamic Scene" },
       { v: "set_dynamic_effect", l: "Dynamic Effect" },
     ];
+    const opts = this._aqaraPresetOptions(a.service);
+    const inList = opts.some((o) => o.value === a.preset);
+    const noAal = opts.length === 0;
     root.innerHTML = `
       <div class="topbar"><h1>${a.slug ? "Edit Aqara preset" : "Create Aqara preset"}</h1>
         <div class="actions"><button class="secondary" id="back">← Back</button></div></div>
       <div class="card">
-        <div class="hint" style="margin-bottom:8px">Thin reference to an Aqara Advanced Lighting action. The effect/scene itself lives in the Aqara app — here you just name it and reference its preset.</div>
-        <div class="row"><label>Name</label><input type="text" id="aq-name" style="flex:1;min-width:200px"></div>
-        <div class="row"><label>Service</label>
+        <div class="hint" style="margin-bottom:8px">Reference to an Aqara Advanced Lighting action. The preset list is read live from Aqara (incl. your own app presets).</div>
+        <div class="row"><label>Name</label><input type="text" id="aq-name" placeholder="display name, e.g. Overwatch (ceiling)" style="flex:1;min-width:220px"></div>
+        <div class="row"><label>Type</label>
           <select id="aq-svc" style="min-width:220px">
             ${services.map((s) => `<option value="${s.v}" ${a.service === s.v ? "selected" : ""}>${s.l}</option>`).join("")}
           </select></div>
-        <div class="row"><label>Preset name</label><input type="text" id="aq-preset" placeholder="e.g. Overwatch (from the Aqara app)" style="flex:1;min-width:220px"></div>
+        <div class="row"><label>Aqara preset</label>
+          ${noAal
+            ? `<input type="text" id="aq-preset" placeholder="type the preset name" style="flex:1;min-width:240px"><span class="hint">Aqara Advanced Lighting not detected — typing manually.</span>`
+            : `<select id="aq-preset" style="min-width:280px">
+                 <option value="">– pick a preset –</option>
+                 ${opts.map((o) => `<option value="${o.value}" ${a.preset === o.value ? "selected" : ""}>${o.label}</option>`).join("")}
+                 ${a.preset && !inList ? `<option value="${a.preset}" selected>${a.preset} (custom)</option>` : ""}
+               </select>`}
+        </div>
         <div class="row"><label>Brightness %</label><input type="number" id="aq-bri" min="1" max="100" placeholder="optional" style="width:120px"></div>
         <div class="row" style="margin-top:8px"><button id="aq-save">${a.slug ? "Update" : "Create"} Aqara preset</button></div>
       </div>`;
@@ -484,7 +506,8 @@ class BenniScenePresetsPanel extends HTMLElement {
     root.querySelector("#aq-preset").value = a.preset;
     root.querySelector("#aq-bri").value = a.brightness;
     root.querySelector("#aq-name").addEventListener("input", (e) => (a.name = e.target.value));
-    root.querySelector("#aq-svc").addEventListener("change", (e) => (a.service = e.target.value));
+    root.querySelector("#aq-svc").addEventListener("change", (e) => { a.service = e.target.value; this._render(); });
+    root.querySelector("#aq-preset").addEventListener("change", (e) => (a.preset = e.target.value));
     root.querySelector("#aq-preset").addEventListener("input", (e) => (a.preset = e.target.value));
     root.querySelector("#aq-bri").addEventListener("input", (e) => (a.brightness = e.target.value));
     root.querySelector("#aq-save").addEventListener("click", () => this._saveAqara());

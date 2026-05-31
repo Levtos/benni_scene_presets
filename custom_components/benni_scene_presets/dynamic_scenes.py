@@ -99,6 +99,17 @@ class DynamicScene:
 class DynamicSceneManager:
     def __init__(self):
         self.dynamic_scenes = {}
+        # Looks that were applied and not yet stopped. Needed because
+        # effect-only (Aqara) looks start no dynamic scene, so the look switch
+        # would otherwise always read "off".
+        self.active_looks = set()
+
+    def mark_look_active(self, look_slug):
+        if look_slug:
+            self.active_looks.add(look_slug)
+
+    def mark_look_inactive(self, look_slug):
+        self.active_looks.discard(look_slug)
 
     def create_new(self, hass, parameters, interval):
         scene = DynamicScene(
@@ -121,6 +132,7 @@ class DynamicSceneManager:
             del self.dynamic_scenes[id]
 
     def stop_all(self):
+        self.active_looks.clear()
         scenes_to_delete = []
 
         for scene in self.dynamic_scenes.values():
@@ -143,7 +155,9 @@ class DynamicSceneManager:
             del self.dynamic_scenes[scene_id]
 
     def is_look_active(self, look_slug):
-        """True if any running scene was started as part of this look."""
+        """True if the look was applied (and not stopped), or any of its scenes run."""
+        if look_slug in self.active_looks:
+            return True
         return any(
             scene._running and scene.parameters.get("look") == look_slug
             for scene in self.dynamic_scenes.values()

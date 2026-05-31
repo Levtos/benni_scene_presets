@@ -61,6 +61,16 @@ class ScenePresetImageUploadView(HomeAssistantView):
 
         return self.json({"img": filename})
 
+def _cache_bust():
+    # The manifest version is static (0.1.0) across branch updates, so it can't
+    # bust the browser cache. Use the panel file's mtime instead — it changes on
+    # every HACS download, forcing the browser to fetch the current panel JS.
+    try:
+        return str(int(os.path.getmtime(f'{BASE_PATH}/frontend/benni_scene_presets_panel.js')))
+    except OSError:
+        return VERSION
+
+
 async def async_setup_view(hass):
     static_paths = [
         StaticPathConfig(PANEL_URL, hass.config.path(f'{BASE_PATH}/frontend/benni_scene_presets_panel.js'), True),
@@ -71,9 +81,11 @@ async def async_setup_view(hass):
 
     await hass.http.async_register_static_paths(static_paths)
 
+    cache_bust = _cache_bust()
+
     hass.http.register_view(ScenePresetDataView)
     hass.http.register_view(ScenePresetImageUploadView)
-    add_extra_js_url(hass, f"/assets/{DOMAIN}/iconset.js?{VERSION}")
+    add_extra_js_url(hass, f"/assets/{DOMAIN}/iconset.js?{cache_bust}")
 
     async_register_built_in_panel(
         hass,
@@ -85,7 +97,7 @@ async def async_setup_view(hass):
         config={
             "_panel_custom": {
                 "name": "benni-scene-presets-panel",
-                "module_url": f"{PANEL_URL}?{VERSION}"
+                "module_url": f"{PANEL_URL}?{cache_bust}"
             },
             "version": VERSION
         },

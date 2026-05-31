@@ -4,6 +4,19 @@ NAME = "Benni Scene Presets"
 PANEL_URL = "/benni_scene_presets_panel.js"
 
 PLATFORMS = ["switch"]
+
+# Aqara Advanced Lighting bridge: we call AAL's services for `aqara` look
+# bindings. Map each "start" service to its matching stop service.
+AQARA_DOMAIN = "aqara_advanced_lighting"
+AQARA_STOP_SERVICES = {
+    "start_dynamic_scene": "stop_dynamic_scene",
+    "set_dynamic_effect": "stop_effect",
+    "set_segment_pattern": "stop_effect",
+    "create_gradient": "stop_effect",
+    "create_blocks": "stop_effect",
+    "start_cct_sequence": "stop_cct_sequence",
+    "start_segment_sequence": "stop_segment_sequence",
+}
 # Dispatched after looks.json changes so the switch platform can add/remove
 # the per-look switch entities at runtime.
 SIGNAL_LOOKS_CHANGED = f"{DOMAIN}_looks_changed"

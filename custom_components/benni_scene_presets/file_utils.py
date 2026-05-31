@@ -32,6 +32,7 @@ CUSTOM_DIR = os.path.join(BASE_PATH, 'userdata/custom')
 CUSTOM_ASSETS_DIR = os.path.join(CUSTOM_DIR, 'assets')
 CUSTOM_PRESETS_PATH = os.path.join(CUSTOM_DIR, 'presets.json')
 LOOKS_PATH = os.path.join(CUSTOM_DIR, 'looks.json')
+AQARA_PATH = os.path.join(CUSTOM_DIR, 'aqara.json')
 
 os.makedirs(CUSTOM_ASSETS_DIR, exist_ok=True)
 
@@ -247,9 +248,11 @@ def reset_userdata(delete_images=True):
     counts = {
         "presets": len(_read_custom().get("presets", [])),
         "looks": len(_read_looks().get("looks", [])),
+        "aqara": len(_read_aqara().get("aqara", [])),
     }
     _write_custom({"presets": [], "categories": []})
     _write_looks({"looks": []})
+    _write_aqara({"aqara": []})
 
     if delete_images and os.path.isdir(CUSTOM_ASSETS_DIR):
         for name in os.listdir(CUSTOM_ASSETS_DIR):
@@ -260,6 +263,7 @@ def reset_userdata(delete_images=True):
 
     reload_preset_data()
     reload_looks()
+    reload_aqara()
     return counts
 
 
@@ -274,5 +278,92 @@ def delete_look(slug):
     return removed
 
 
+# --- Aqara presets (thin references to AAL service actions) -----------------
+#
+# An Aqara preset names an Aqara Advanced Lighting action:
+#   {"slug","name","service":"start_dynamic_scene"|"set_dynamic_effect"|...,
+#    "data":{...}}  # data = AAL service params (e.g. {"preset":"Overwatch"})
+# We do NOT drive the hardware — apply calls AAL's services. Mutated in place
+# on reload like PRESET_DATA / LOOKS.
+
+AQARA = {"aqara": []}
+
+
+def _read_aqara():
+    if os.path.exists(AQARA_PATH):
+        try:
+            with open(AQARA_PATH, 'r', encoding='utf-8') as file:
+                return json.load(file)
+        except (json.JSONDecodeError, OSError) as e:
+            _LOGGER.error("Error loading aqara presets: %s", e)
+    return {"aqara": []}
+
+
+def _write_aqara(data):
+    os.makedirs(CUSTOM_DIR, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=CUSTOM_DIR, suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as file:
+            json.dump(data, file, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, AQARA_PATH)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+def reload_aqara():
+    data = _read_aqara()
+    AQARA["aqara"] = list(data.get("aqara", []))
+    return AQARA
+
+
+def list_aqara():
+    return _read_aqara()
+
+
+def get_aqara(ident):
+    """Resolve an Aqara preset by slug or name."""
+    if not ident:
+        return None
+    for item in AQARA.get("aqara", []):
+        if item.get("slug") == ident or item.get("name") == ident:
+            return item
+    return None
+
+
+def save_aqara(preset):
+    data = _read_aqara()
+    items = data.setdefault("aqara", [])
+
+    slug = preset.get("slug")
+    if not slug:
+        taken = {item.get("slug") for item in items if item.get("slug")}
+        slug = _unique_slug(slugify(preset.get("name")), taken)
+        preset["slug"] = slug
+
+    for index, existing in enumerate(items):
+        if existing.get("slug") == slug:
+            items[index] = preset
+            break
+    else:
+        items.append(preset)
+
+    _write_aqara(data)
+    reload_aqara()
+    return preset
+
+
+def delete_aqara(slug):
+    data = _read_aqara()
+    items = data.get("aqara", [])
+    remaining = [item for item in items if item.get("slug") != slug]
+    removed = len(remaining) != len(items)
+    data["aqara"] = remaining
+    _write_aqara(data)
+    reload_aqara()
+    return removed
+
+
 reload_preset_data()
 reload_looks()
+reload_aqara()

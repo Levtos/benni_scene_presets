@@ -121,7 +121,9 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
                     vol.Optional("scene"): vol.Any(str, None),
                     vol.Optional("interval"): vol.Any(int, None),
                     vol.Optional("transition"): vol.Any(int, None),
-                    # phase B (effect bindings) — accepted/persisted, not executed yet
+                    # aqara binding: references an Aqara preset by slug/name
+                    vol.Optional("aqara"): vol.Any(str, None),
+                    # generic effect binding (advanced/fallback): raw service + data
                     vol.Optional("service"): vol.Any(str, None),
                     vol.Optional("data"): vol.Any(dict, None),
                 }
@@ -135,7 +137,9 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
         for b in msg["bindings"]:
             kind = b.get("kind", "scene")
             binding = {"kind": kind, "targets": b["targets"]}
-            if kind == "effect":
+            if kind == "aqara":
+                binding["aqara"] = b.get("aqara")
+            elif kind == "effect":
                 if b.get("service"):
                     binding["service"] = b["service"]
                 if b.get("data") is not None:
@@ -167,6 +171,44 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
     async def ws_delete_look(hass, connection, msg) -> None:
         removed = await hass.async_add_executor_job(file_utils.delete_look, msg["slug"])
         async_dispatcher_send(hass, SIGNAL_LOOKS_CHANGED)
+        connection.send_result(msg["id"], {"deleted": removed})
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/list_aqara",
+        }
+    )
+    def ws_list_aqara(hass, connection, msg) -> None:
+        connection.send_result(msg["id"], file_utils.AQARA)
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/save_aqara",
+            vol.Optional("slug"): str,
+            vol.Required("name"): str,
+            vol.Required("service"): str,
+            vol.Optional("data"): vol.Any(dict, None),
+        }
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_save_aqara(hass, connection, msg) -> None:
+        preset = {"name": msg["name"], "service": msg["service"], "data": msg.get("data") or {}}
+        if msg.get("slug"):
+            preset["slug"] = msg["slug"]
+        saved = await hass.async_add_executor_job(file_utils.save_aqara, preset)
+        connection.send_result(msg["id"], saved)
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/delete_aqara",
+            vol.Required("slug"): str,
+        }
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_delete_aqara(hass, connection, msg) -> None:
+        removed = await hass.async_add_executor_job(file_utils.delete_aqara, msg["slug"])
         connection.send_result(msg["id"], {"deleted": removed})
 
     @websocket_api.websocket_command(
@@ -217,4 +259,7 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
     websocket_api.async_register_command(hass, ws_delete_preset)
     websocket_api.async_register_command(hass, ws_save_look)
     websocket_api.async_register_command(hass, ws_delete_look)
+    websocket_api.async_register_command(hass, ws_list_aqara)
+    websocket_api.async_register_command(hass, ws_save_aqara)
+    websocket_api.async_register_command(hass, ws_delete_aqara)
     websocket_api.async_register_command(hass, ws_apply_preview)

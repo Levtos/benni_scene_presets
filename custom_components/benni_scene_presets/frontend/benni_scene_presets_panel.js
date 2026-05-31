@@ -20,9 +20,11 @@ class BenniScenePresetsPanel extends HTMLElement {
     this._initialized = false;
     this._presets = [];
     this._looks = [];
-    this._view = "browse"; // browse | scene | look | io
+    this._aqara = [];
+    this._view = "browse"; // browse | scene | look | io | aqara
     this._editing = this._blankScene();
     this._editingLook = this._blankLook();
+    this._editingAqara = this._blankAqara();
     this._targets = [];
     this._tunables = { dynamic: false, shuffle: false, customBri: false, brightness: 128, customTrans: false, transition: 2 };
     this._favs = this._loadFavs();
@@ -43,10 +45,13 @@ class BenniScenePresetsPanel extends HTMLElement {
   }
   _blankBinding() {
     return { kind: "scene", entity_ids: [], scene: "", interval: "", transition: "",
-      service: "aqara_advanced_lighting.set_dynamic_effect", effect: "" };
+      aqara: "", service: "aqara_advanced_lighting.set_dynamic_effect", effect: "" };
   }
   _blankLook() {
     return { slug: null, name: "", bindings: [this._blankBinding()] };
+  }
+  _blankAqara() {
+    return { slug: null, name: "", service: "start_dynamic_scene", preset: "", brightness: "" };
   }
 
   _loadFavs() { try { return new Set(JSON.parse(localStorage.getItem(FAV_KEY) || "[]")); } catch { return new Set(); } }
@@ -66,6 +71,45 @@ class BenniScenePresetsPanel extends HTMLElement {
       const data = await this._hass.callWS({ type: `${DOMAIN}/list_looks` });
       this._looks = data.looks || [];
     } catch { this._looks = []; }
+    try {
+      const data = await this._hass.callWS({ type: `${DOMAIN}/list_aqara` });
+      this._aqara = data.aqara || [];
+    } catch { this._aqara = []; }
+    this._render();
+  }
+
+  // ---- aqara CRUD ----------------------------------------------------------
+
+  async _saveAqara() {
+    const a = this._editingAqara;
+    if (!a.name.trim()) { this._toast("Name the Aqara preset."); return; }
+    if (!a.preset.trim()) { this._toast("Enter the Aqara preset name (from the Aqara app)."); return; }
+    const data = { preset: a.preset.trim() };
+    if (a.brightness !== "" && a.brightness != null) data.brightness = Number(a.brightness);
+    const msg = { type: `${DOMAIN}/save_aqara`, name: a.name.trim(), service: a.service, data };
+    if (a.slug) msg.slug = a.slug;
+    try {
+      await this._hass.callWS(msg);
+      this._toast("Aqara preset saved.");
+      this._editingAqara = this._blankAqara();
+      this._view = "browse";
+      await this._refresh();
+    } catch (err) { this._toast(`Save failed: ${err.message || err}`); }
+  }
+
+  async _deleteAqara(slug) {
+    if (!confirm("Delete this Aqara preset?")) return;
+    try { await this._hass.callWS({ type: `${DOMAIN}/delete_aqara`, slug }); this._toast("Deleted."); this._refresh(); }
+    catch (err) { this._toast(`Delete failed: ${err.message || err}`); }
+  }
+
+  _editAqara(item) {
+    const d = item.data || {};
+    this._editingAqara = {
+      slug: item.slug, name: item.name || "", service: item.service || "start_dynamic_scene",
+      preset: d.preset || "", brightness: d.brightness != null ? d.brightness : "",
+    };
+    this._view = "aqara";
     this._render();
   }
 
@@ -228,6 +272,10 @@ class BenniScenePresetsPanel extends HTMLElement {
     if (!l.name.trim()) { this._toast("Name the look."); return; }
     const bindings = l.bindings.map((b) => {
       const entity_id = this._expandList(b.entity_ids);
+      if (b.kind === "aqara") {
+        if (!entity_id.length || !b.aqara) return null;
+        return { kind: "aqara", targets: { entity_id }, aqara: b.aqara };
+      }
       if (b.kind === "effect") {
         if (!entity_id.length || !b.service || !b.effect) return null;
         return { kind: "effect", targets: { entity_id }, service: b.service, data: { effect: b.effect } };
@@ -266,6 +314,7 @@ class BenniScenePresetsPanel extends HTMLElement {
         scene: b.scene || b.scene_id || "",
         interval: b.interval != null ? b.interval : "",
         transition: b.transition != null ? b.transition : "",
+        aqara: b.aqara || "",
         service: b.service || "aqara_advanced_lighting.set_dynamic_effect",
         effect: (b.data && b.data.effect) || "",
       })),
@@ -312,6 +361,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     if (!root) return;
     if (this._view === "scene") return this._renderSceneEditor(root);
     if (this._view === "look") return this._renderLookEditor(root);
+    if (this._view === "aqara") return this._renderAqaraEditor(root);
     if (this._view === "io") return this._renderIO(root);
     this._renderBrowse(root);
   }
@@ -323,6 +373,7 @@ class BenniScenePresetsPanel extends HTMLElement {
         <h1>Benni Scene Presets</h1>
         <div class="actions">
           <button id="a-scene">+ Create Custom</button>
+          <button id="a-aqara" class="secondary">+ Create Aqara</button>
           <button id="a-look" class="secondary">+ Create Look</button>
           <button id="a-io" class="secondary">Import / Export</button>
         </div>
@@ -350,6 +401,7 @@ class BenniScenePresetsPanel extends HTMLElement {
       </div>
 
       ${this._renderSceneSections()}
+      ${this._renderAqaraSection()}
       ${this._renderLookSection()}
     `;
 
@@ -360,6 +412,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     }));
     const bind = (id, ev, fn) => root.querySelector(id).addEventListener(ev, fn);
     bind("#a-scene", "click", () => { this._editing = this._blankScene(); this._view = "scene"; this._render(); });
+    bind("#a-aqara", "click", () => { this._editingAqara = this._blankAqara(); this._view = "aqara"; this._render(); });
     bind("#a-look", "click", () => { this._editingLook = this._blankLook(); this._view = "look"; this._render(); });
     bind("#a-io", "click", () => { this._ioString = ""; this._view = "io"; this._render(); });
     bind("#t-dyn", "change", (e) => { this._tunables.dynamic = e.target.checked; });
@@ -385,6 +438,56 @@ class BenniScenePresetsPanel extends HTMLElement {
       el.addEventListener("click", (e) => { e.stopPropagation(); this._editLook(this._looks.find((l) => l.slug === el.dataset.editlook)); }));
     root.querySelectorAll("[data-dellook]").forEach((el) =>
       el.addEventListener("click", (e) => { e.stopPropagation(); this._deleteLook(el.dataset.dellook); }));
+    root.querySelectorAll("[data-editaqara]").forEach((el) =>
+      el.addEventListener("click", (e) => { e.stopPropagation(); this._editAqara(this._aqara.find((a) => a.slug === el.dataset.editaqara)); }));
+    root.querySelectorAll("[data-delaqara]").forEach((el) =>
+      el.addEventListener("click", (e) => { e.stopPropagation(); this._deleteAqara(el.dataset.delaqara); }));
+  }
+
+  _renderAqaraSection() {
+    if (!this._aqara.length) {
+      return `<div class="section-title">Aqara presets</div><div class="hint">No Aqara presets yet. Click “+ Create Aqara”. (Needs the Aqara Advanced Lighting integration.)</div>`;
+    }
+    const tiles = this._aqara.map((a) => `
+      <div class="tile aqara">
+        <div class="tile-row">
+          <button class="mini secondary" data-editaqara="${a.slug}">edit</button>
+          <button class="mini danger" data-delaqara="${a.slug}">del</button>
+        </div>
+        <span class="tile-name">${a.name || "(unnamed)"}<br><span class="hint">${(a.data && a.data.preset) || a.service}</span></span>
+      </div>`).join("");
+    return `<div class="section-title">Aqara presets</div><div class="grid">${tiles}</div>`;
+  }
+
+  _renderAqaraEditor(root) {
+    const a = this._editingAqara;
+    const services = [
+      { v: "start_dynamic_scene", l: "Dynamic Scene" },
+      { v: "set_dynamic_effect", l: "Dynamic Effect" },
+    ];
+    root.innerHTML = `
+      <div class="topbar"><h1>${a.slug ? "Edit Aqara preset" : "Create Aqara preset"}</h1>
+        <div class="actions"><button class="secondary" id="back">← Back</button></div></div>
+      <div class="card">
+        <div class="hint" style="margin-bottom:8px">Thin reference to an Aqara Advanced Lighting action. The effect/scene itself lives in the Aqara app — here you just name it and reference its preset.</div>
+        <div class="row"><label>Name</label><input type="text" id="aq-name" style="flex:1;min-width:200px"></div>
+        <div class="row"><label>Service</label>
+          <select id="aq-svc" style="min-width:220px">
+            ${services.map((s) => `<option value="${s.v}" ${a.service === s.v ? "selected" : ""}>${s.l}</option>`).join("")}
+          </select></div>
+        <div class="row"><label>Preset name</label><input type="text" id="aq-preset" placeholder="e.g. Overwatch (from the Aqara app)" style="flex:1;min-width:220px"></div>
+        <div class="row"><label>Brightness %</label><input type="number" id="aq-bri" min="1" max="100" placeholder="optional" style="width:120px"></div>
+        <div class="row" style="margin-top:8px"><button id="aq-save">${a.slug ? "Update" : "Create"} Aqara preset</button></div>
+      </div>`;
+    root.querySelector("#back").addEventListener("click", () => { this._view = "browse"; this._render(); });
+    root.querySelector("#aq-name").value = a.name;
+    root.querySelector("#aq-preset").value = a.preset;
+    root.querySelector("#aq-bri").value = a.brightness;
+    root.querySelector("#aq-name").addEventListener("input", (e) => (a.name = e.target.value));
+    root.querySelector("#aq-svc").addEventListener("change", (e) => (a.service = e.target.value));
+    root.querySelector("#aq-preset").addEventListener("input", (e) => (a.preset = e.target.value));
+    root.querySelector("#aq-bri").addEventListener("input", (e) => (a.brightness = e.target.value));
+    root.querySelector("#aq-save").addEventListener("click", () => this._saveAqara());
   }
 
   _tileBg(scene) {
@@ -531,7 +634,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     l.bindings.forEach((b, idx) => {
       const card = document.createElement("div");
       card.className = "subcard";
-      const isEffect = b.kind === "effect";
+      const kind = b.kind || "scene";
       const lightsSelect = checkboxes(b);
       const sceneRows = `
         <div class="row"><label>Scene</label>
@@ -539,15 +642,24 @@ class BenniScenePresetsPanel extends HTMLElement {
             ${this._presets.map((p) => `<option value="${p.slug}" ${b.scene === p.slug ? "selected" : ""}>${p.name || "(unnamed)"}</option>`).join("")}</select></div>
         <div class="row"><label>Interval (s)</label><input type="number" class="b-int" min="0" max="3600" placeholder="scene default" style="width:130px" value="${b.interval}">
           <label style="min-width:auto;margin-left:12px">Transition (s)</label><input type="number" class="b-trn" min="0" max="300" placeholder="scene default" style="width:130px" value="${b.transition}"></div>`;
+      const aqaraRows = `
+        <div class="row"><label>Aqara preset</label>
+          <select class="b-aqara" style="min-width:240px"><option value="">– pick an Aqara preset –</option>
+            ${this._aqara.map((a) => `<option value="${a.slug}" ${b.aqara === a.slug ? "selected" : ""}>${a.name || "(unnamed)"}</option>`).join("")}</select></div>`;
       const effectRows = `
         <div class="row"><label>Service</label><input type="text" class="b-svc" style="flex:1;min-width:260px" value="${b.service || ""}"></div>
-        <div class="row"><label>Effect</label><input type="text" class="b-eff" placeholder="effect name (Aqara)" style="min-width:200px" value="${b.effect || ""}"></div>`;
+        <div class="row"><label>Effect</label><input type="text" class="b-eff" placeholder="effect name" style="min-width:200px" value="${b.effect || ""}"></div>`;
+      const rows = kind === "aqara" ? aqaraRows : kind === "effect" ? effectRows : sceneRows;
       card.innerHTML = `
         <div class="row"><label>Type</label>
-          <select class="b-kind"><option value="scene" ${isEffect ? "" : "selected"}>Scene</option><option value="effect" ${isEffect ? "selected" : ""}>Effect (service)</option></select>
+          <select class="b-kind">
+            <option value="scene" ${kind === "scene" ? "selected" : ""}>Scene</option>
+            <option value="aqara" ${kind === "aqara" ? "selected" : ""}>Aqara preset</option>
+            <option value="effect" ${kind === "effect" ? "selected" : ""}>Effect (raw service)</option>
+          </select>
           <button class="mini danger b-rm" style="margin-left:auto">remove</button></div>
-        <div class="row" style="align-items:flex-start"><label>${isEffect ? "Targets" : "Lights"}</label>${lightsSelect}</div>
-        ${isEffect ? effectRows : sceneRows}`;
+        <div class="row" style="align-items:flex-start"><label>${kind === "scene" ? "Lights" : "Targets"}</label>${lightsSelect}</div>
+        ${rows}`;
       card.querySelector(".b-kind").addEventListener("change", (e) => { b.kind = e.target.value; this._renderBindings(); });
       card.querySelectorAll(".b-tgt").forEach((cb) => cb.addEventListener("change", (e) => {
         const id = e.target.value;
@@ -555,7 +667,9 @@ class BenniScenePresetsPanel extends HTMLElement {
         else { b.entity_ids = b.entity_ids.filter((x) => x !== id); }
       }));
       card.querySelector(".b-rm").addEventListener("click", () => { l.bindings.splice(idx, 1); if (!l.bindings.length) l.bindings = [this._blankBinding()]; this._renderBindings(); });
-      if (isEffect) {
+      if (kind === "aqara") {
+        card.querySelector(".b-aqara").addEventListener("change", (e) => (b.aqara = e.target.value));
+      } else if (kind === "effect") {
         card.querySelector(".b-svc").addEventListener("input", (e) => (b.service = e.target.value));
         card.querySelector(".b-eff").addEventListener("input", (e) => (b.effect = e.target.value));
       } else {
@@ -606,6 +720,7 @@ class BenniScenePresetsPanel extends HTMLElement {
         box-shadow:inset 0 -40px 40px -20px rgba(0,0,0,.55); transition:transform .08s; }
       .tile:hover { transform:translateY(-2px); }
       .tile.look { background:linear-gradient(135deg,#3a3a55,#23233a); }
+      .tile.aqara { background:linear-gradient(135deg,#1f4d45,#13302c); }
       .tile-name { color:#fff; font-weight:600; text-shadow:0 1px 3px rgba(0,0,0,.7); }
       .tile-row { position:absolute; top:8px; left:8px; display:flex; gap:4px; opacity:0; transition:opacity .1s; }
       .tile:hover .tile-row { opacity:1; }

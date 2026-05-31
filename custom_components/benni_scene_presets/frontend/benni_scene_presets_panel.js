@@ -73,12 +73,42 @@ class BenniScenePresetsPanel extends HTMLElement {
     return Object.keys(this._hass.states || {}).filter((id) => id.startsWith("light.")).sort();
   }
 
+  // Selectable targets: individual lights + light groups. Groups are either
+  // HA group.* entities or benni_core_devices' sensor.benni_light_group_* (whose
+  // members live in the entity_id attribute).
+  _targetEntities() {
+    const states = this._hass.states || {};
+    const groups = Object.keys(states)
+      .filter((id) => id.startsWith("group.") || id.startsWith("sensor.benni_light_group_"))
+      .sort()
+      .map((id) => ({ id, label: (states[id].attributes && states[id].attributes.friendly_name) || id, group: true }));
+    const lights = this._lights().map((id) => ({ id, label: id, group: false }));
+    return { groups, lights };
+  }
+
+  // Expand any benni_light_group sensor to its member entities; pass the rest
+  // (lights, group.*) straight through — the backend resolves group.* itself.
+  _resolveTargets() {
+    const states = this._hass.states || {};
+    const out = [];
+    for (const id of this._targets) {
+      if (id.startsWith("sensor.benni_light_group_")) {
+        const members = states[id] && states[id].attributes && states[id].attributes.entity_id;
+        if (members) out.push(...[].concat(members));
+      } else {
+        out.push(id);
+      }
+    }
+    return [...new Set(out)];
+  }
+
   // ---- apply (browse) ------------------------------------------------------
 
   async _applyScene(scene) {
-    if (!this._targets.length) { this._toast("Pick one or more targets first."); return; }
+    const entity_id = this._resolveTargets();
+    if (!entity_id.length) { this._toast("Pick one or more targets first."); return; }
     const t = this._tunables;
-    const data = { targets: { entity_id: this._targets } };
+    const data = { targets: { entity_id } };
     if (t.customBri) data.brightness = Number(t.brightness);
     if (t.customTrans) data.transition = Number(t.transition);
     try {
@@ -135,7 +165,7 @@ class BenniScenePresetsPanel extends HTMLElement {
 
   async _quickLook(scene) {
     // One-binding look: all current targets (or all lights) -> this scene.
-    const ents = this._targets.length ? this._targets : this._lights();
+    const ents = this._targets.length ? this._resolveTargets() : this._lights();
     try {
       await this._hass.callWS({
         type: `${DOMAIN}/save_look`, name: scene.name,
@@ -165,9 +195,10 @@ class BenniScenePresetsPanel extends HTMLElement {
   }
 
   async _previewColors(colors) {
-    if (!this._targets.length) { this._toast("Pick a target to preview on."); return; }
+    const entity_id = this._resolveTargets();
+    if (!entity_id.length) { this._toast("Pick a target to preview on."); return; }
     try {
-      await this._hass.callWS({ type: `${DOMAIN}/apply_preview`, targets: { entity_id: this._targets }, colors, transition: 1 });
+      await this._hass.callWS({ type: `${DOMAIN}/apply_preview`, targets: { entity_id }, colors, transition: 1 });
     } catch (err) { this._toast(`Preview failed: ${err.message || err}`); }
   }
 
@@ -281,7 +312,7 @@ class BenniScenePresetsPanel extends HTMLElement {
   }
 
   _renderBrowse(root) {
-    const lights = this._lights();
+    const { groups, lights } = this._targetEntities();
     root.innerHTML = `
       <div class="topbar">
         <h1>Benni Scene Presets</h1>
@@ -294,9 +325,13 @@ class BenniScenePresetsPanel extends HTMLElement {
 
       <div class="card">
         <div class="card-title">Targets</div>
-        <select multiple size="5" id="targets" class="lights">
-          ${lights.map((id) => `<option value="${id}" ${this._targets.includes(id) ? "selected" : ""}>${id}</option>`).join("")}
-        </select>
+        <div class="hint" style="margin-bottom:6px">Pick lights and/or groups (multiple allowed).</div>
+        <div id="targets" class="targets-box">
+          ${groups.length ? `<div class="tgt-head">Groups</div>` : ""}
+          ${groups.map((g) => `<label class="tgt"><input type="checkbox" data-tgt="${g.id}" ${this._targets.includes(g.id) ? "checked" : ""}> ${g.label} <span class="hint">(group)</span></label>`).join("")}
+          ${groups.length ? `<div class="tgt-head">Lights</div>` : ""}
+          ${lights.map((l) => `<label class="tgt"><input type="checkbox" data-tgt="${l.id}" ${this._targets.includes(l.id) ? "checked" : ""}> ${l.label}</label>`).join("")}
+        </div>
         <div class="card-title" style="margin-top:14px">Tunables <span class="hint">(for manual testing — brightness usually comes from the policy)</span></div>
         <div class="tun">
           <label><input type="checkbox" id="t-dyn" ${this._tunables.dynamic ? "checked" : ""}> Dynamic (cycle)</label>
@@ -313,8 +348,11 @@ class BenniScenePresetsPanel extends HTMLElement {
       ${this._renderLookSection()}
     `;
 
-    const ts = root.querySelector("#targets");
-    ts.addEventListener("change", (e) => { this._targets = Array.from(e.target.selectedOptions).map((o) => o.value); });
+    root.querySelectorAll("#targets [data-tgt]").forEach((cb) => cb.addEventListener("change", (e) => {
+      const id = e.target.dataset.tgt;
+      if (e.target.checked) { if (!this._targets.includes(id)) this._targets.push(id); }
+      else { this._targets = this._targets.filter((x) => x !== id); }
+    }));
     const bind = (id, ev, fn) => root.querySelector(id).addEventListener(ev, fn);
     bind("#a-scene", "click", () => { this._editing = this._blankScene(); this._view = "scene"; this._render(); });
     bind("#a-look", "click", () => { this._editingLook = this._blankLook(); this._view = "look"; this._render(); });
@@ -560,6 +598,11 @@ class BenniScenePresetsPanel extends HTMLElement {
       .star { position:absolute; top:6px; right:8px; font-size:20px; color:rgba(255,255,255,.5); cursor:pointer; text-shadow:0 1px 3px rgba(0,0,0,.7); }
       .star.on { color:#ffd54a; }
       .lights { padding:6px; border-radius:8px; border:1px solid var(--divider-color,#444); background:var(--card-background-color,#1c1c1c); color:var(--primary-text-color); width:100%; box-sizing:border-box; }
+      .targets-box { max-height:220px; overflow:auto; border:1px solid var(--divider-color,#444); border-radius:8px; padding:8px; }
+      .tgt { display:flex; align-items:center; gap:8px; padding:3px 4px; font-size:14px; cursor:pointer; color:var(--primary-text-color); }
+      .tgt:hover { background:var(--secondary-background-color,#262626); border-radius:6px; }
+      .tgt input { min-width:auto; }
+      .tgt-head { font-size:12px; font-weight:600; color:var(--secondary-text-color); margin:8px 2px 2px; }
       .tun { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
       .tun label { display:flex; gap:6px; align-items:center; }
       .row { display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }

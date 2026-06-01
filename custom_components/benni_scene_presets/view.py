@@ -71,10 +71,29 @@ def _cache_bust():
         return VERSION
 
 
+def _new_ux_cache_bust():
+    # Bust the new UX entry module on every change to main.js. Sibling modules
+    # are served with cache_headers=False so they revalidate independently.
+    try:
+        return str(int(os.path.getmtime(f'{BASE_PATH}/frontend/app/main.js')))
+    except OSError:
+        return VERSION
+
+
+# New modular UX lives under frontend/app/ and is served as a directory so its
+# ES modules can import each other. Exposed as a second, parallel panel while we
+# rebuild screen by screen — the classic panel keeps working until the swap.
+NEW_UX_URL = f'/{DOMAIN}_app'
+NEW_UX_ENTRY = f'{NEW_UX_URL}/main.js'
+
+
 async def async_setup_view(hass):
     static_paths = [
         StaticPathConfig(PANEL_URL, hass.config.path(f'{BASE_PATH}/frontend/benni_scene_presets_panel.js'), True),
-        StaticPathConfig(f'/assets/{DOMAIN}/iconset.js', hass.config.path(f'{BASE_PATH}/res/iconset.js'), True)
+        StaticPathConfig(f'/assets/{DOMAIN}/iconset.js', hass.config.path(f'{BASE_PATH}/res/iconset.js'), True),
+        # Serve the whole app dir; cache_headers=False so modules revalidate
+        # during the rebuild (avoids stale ES modules between edits).
+        StaticPathConfig(NEW_UX_URL, hass.config.path(f'{BASE_PATH}/frontend/app'), False),
     ]
 
     static_paths.extend(await get_preset_image_paths(hass))
@@ -87,6 +106,8 @@ async def async_setup_view(hass):
     hass.http.register_view(ScenePresetImageUploadView)
     add_extra_js_url(hass, f"/assets/{DOMAIN}/iconset.js?{cache_bust}")
 
+    # The regular panel now serves the new modular UX directly. (The classic
+    # panel JS is still served above as a fallback, but isn't registered.)
     async_register_built_in_panel(
         hass,
         component_name="custom",
@@ -96,8 +117,8 @@ async def async_setup_view(hass):
         require_admin=False,
         config={
             "_panel_custom": {
-                "name": "benni-scene-presets-panel",
-                "module_url": f"{PANEL_URL}?{cache_bust}"
+                "name": "bsp-new-app",
+                "module_url": f"{NEW_UX_ENTRY}?{_new_ux_cache_bust()}"
             },
             "version": VERSION
         },

@@ -78,7 +78,7 @@ class BenniScenePresetsPanel extends HTMLElement {
   }
   get hass() { return this._hass; }
 
-  _blankScene() { return { slug: null, name: "", category: "", img: null, mode: "color", colors: ["#ff8800"], kelvin: 3000, interval: 300, transition: 60, shuffle: true }; }
+  _blankScene() { return { slug: null, name: "", category: "", img: null, mode: "color", colors: ["#ff8800"], kelvins: [3000], interval: 300, transition: 60, shuffle: true }; }
   _blankBinding() { return { kind: "scene", entity_ids: [], scene: "", interval: "", transition: "", aqara: "", service: "aqara_advanced_lighting.set_dynamic_effect", effect: "" }; }
   _blankLook() { return { slug: null, name: "", img: null, bindings: [this._blankBinding()] }; }
   _blankAqara() { return { slug: null, name: "", img: null, service: "start_dynamic_scene", preset: "", brightness: "" }; }
@@ -111,7 +111,7 @@ class BenniScenePresetsPanel extends HTMLElement {
   _typeLabel(t) { return t === "aqara" ? "Aqara preset" : t === "look" ? "Look" : "Custom preset"; }
 
   _isReady(it) {
-    if (it.type === "custom") return it.obj.kelvin != null || (it.obj.lights || []).length > 0;
+    if (it.type === "custom") return this._presetKelvins(it.obj) != null || (it.obj.lights || []).length > 0;
     if (it.type === "aqara") return !!(it.obj.service && it.obj.data && it.obj.data.preset);
     if (it.type === "look") return (it.obj.bindings || []).length > 0;
     return true;
@@ -169,7 +169,13 @@ class BenniScenePresetsPanel extends HTMLElement {
     if (!slug) return "all";
     const p = this._presets.find((x) => x.slug === slug);
     if (!p) return "all";
-    return p.kelvin != null ? "white" : "color";
+    return this._presetKelvins(p) != null ? "white" : "color";
+  }
+  // A scene's Kelvin values (new list or legacy single), or null if colour scene.
+  _presetKelvins(p) {
+    if (p.kelvins && p.kelvins.length) return p.kelvins;
+    if (p.kelvin != null) return [p.kelvin];
+    return null;
   }
   // Lights already used by OTHER bindings of the look currently being edited
   // (groups expanded to their member lights). One light = one binding per look,
@@ -304,8 +310,9 @@ class BenniScenePresetsPanel extends HTMLElement {
     if (!s.name.trim()) { this._toast("Please enter a name."); return; }
     const msg = { type: `${DOMAIN}/save_preset`, name: s.name.trim(), category: s.category || null, interval: Number(s.interval), transition: Number(s.transition), shuffle: !!s.shuffle };
     if (s.mode === "white") {
-      if (s.kelvin == null || s.kelvin === "") { this._toast("Pick a colour temperature."); return; }
-      msg.kelvin = Number(s.kelvin);
+      const kelvins = (s.kelvins || []).map(Number).filter((k) => !Number.isNaN(k));
+      if (!kelvins.length) { this._toast("Add at least one colour temperature."); return; }
+      msg.kelvins = kelvins;
     } else {
       if (!s.colors.length) { this._toast("Add at least one colour."); return; }
       msg.colors = s.colors;
@@ -317,10 +324,11 @@ class BenniScenePresetsPanel extends HTMLElement {
   }
   async _deleteSceneSlug(slug) { try { await this._hass.callWS({ type: `${DOMAIN}/delete_preset`, slug }); this._toast("Deleted."); this._refresh(); } catch (e) { this._toast(`Delete failed: ${e.message || e}`); } }
   _editScene(p) {
-    const isKelvin = p.kelvin != null;
+    const kelvins = p.kelvins && p.kelvins.length ? p.kelvins.slice() : (p.kelvin != null ? [p.kelvin] : null);
+    const isKelvin = kelvins != null;
     this._editing = { slug: p.slug, name: p.name || "", category: p.category || "", img: p.img || null,
       mode: isKelvin ? "white" : "color",
-      colors: (p.lights || []).map((l) => l.hex || "#ffffff"), kelvin: isKelvin ? p.kelvin : 3000,
+      colors: (p.lights || []).map((l) => l.hex || "#ffffff"), kelvins: isKelvin ? kelvins : [3000],
       interval: p.interval != null ? p.interval : 300, transition: p.transition != null ? p.transition : 60, shuffle: p.shuffle != null ? p.shuffle : true };
     if (!this._editing.colors.length) this._editing.colors = ["#ff8800"];
     this._view = "scene"; this._render();
@@ -402,7 +410,8 @@ class BenniScenePresetsPanel extends HTMLElement {
 
   _exportScene(p) {
     const payload = { n: p.name, cat: p.category || "", c: (p.lights || []).map((l) => l.hex || "#ffffff"), i: p.interval, t: p.transition, s: p.shuffle };
-    if (p.kelvin != null) payload.k = p.kelvin;
+    const kl = this._presetKelvins(p);
+    if (kl) payload.k = kl; // list of Kelvin values
     this._ioString = "BSP1:" + btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
     this._view = "io"; this._render(); this._toast("Export string ready below.");
   }
@@ -411,10 +420,11 @@ class BenniScenePresetsPanel extends HTMLElement {
       str = (str || "").trim();
       if (!str.startsWith("BSP1:")) throw new Error("Not a BSP1 string");
       const p = JSON.parse(decodeURIComponent(escape(atob(str.slice(5)))));
-      const isKelvin = p.k != null;
+      const kelvins = p.k == null ? null : (Array.isArray(p.k) ? p.k : [p.k]); // accept list or legacy scalar
+      const isKelvin = kelvins != null;
       this._editing = { slug: null, name: p.n || "", category: p.cat || "", img: null,
         mode: isKelvin ? "white" : "color",
-        colors: (p.c && p.c.length ? p.c : ["#ff8800"]).slice(0, MAX_COLORS), kelvin: isKelvin ? p.k : 3000,
+        colors: (p.c && p.c.length ? p.c : ["#ff8800"]).slice(0, MAX_COLORS), kelvins: isKelvin ? kelvins.slice(0, MAX_COLORS) : [3000],
         interval: p.i != null ? p.i : 300, transition: p.t != null ? p.t : 60, shuffle: p.s != null ? p.s : true };
       this._view = "scene"; this._render(); this._toast("Imported — review and create.");
     } catch (e) { this._toast(`Import failed: ${e.message || e}`); }
@@ -438,7 +448,8 @@ class BenniScenePresetsPanel extends HTMLElement {
   _gradient(it) {
     if (it.obj && it.obj.img) return `background-image:url('/assets/${DOMAIN}/${it.obj.img}')`;
     if (it.type === "custom") {
-      if (it.obj.kelvin != null) { const c = kelvinToHex(it.obj.kelvin); return `background:linear-gradient(135deg,${c},#00000066)`; }
+      const kl = this._presetKelvins(it.obj);
+      if (kl) { const cs = kl.map(kelvinToHex); return `background:linear-gradient(135deg,${cs.length > 1 ? cs.join(",") : cs[0] + ",#00000066"})`; }
       const cols = (it.obj.lights || []).map((l) => l.hex).filter(Boolean);
       if (cols.length > 1) return `background:linear-gradient(135deg,${cols.join(",")})`;
       if (cols.length === 1) return `background:linear-gradient(135deg,${cols[0]},#00000066)`;
@@ -556,9 +567,10 @@ class BenniScenePresetsPanel extends HTMLElement {
     const running = this._isRunning(it);
     let rows = "";
     if (it.type === "custom") {
-      const isKelvin = it.obj.kelvin != null;
+      const kl = this._presetKelvins(it.obj);
+      const isKelvin = kl != null;
       const valueRow = isKelvin
-        ? `<div class="drow"><span>Kelvin</span><span class="sw-row"><i class="sw" style="background:${kelvinToHex(it.obj.kelvin)}"></i> ${it.obj.kelvin} K</span></div>`
+        ? `<div class="drow"><span>Kelvin</span><span class="sw-row">${kl.map((k) => `<i class="sw" style="background:${kelvinToHex(k)}"></i>`).join("")} ${kl.length === 1 ? kl[0] + " K" : kl[0] + "–" + kl[kl.length - 1] + " K"}</span></div>`
         : `<div class="drow"><span>Colours</span><span class="sw-row">${(it.obj.lights || []).map((l) => l.hex).filter(Boolean).map((c) => `<i class="sw" style="background:${c}"></i>`).join("")} ${(it.obj.lights || []).length}</span></div>`;
       rows = `
         <div class="drow"><span>Type</span><b>Custom preset${isKelvin ? " (white)" : ""}</b></div>
@@ -610,10 +622,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     const s = this._editing;
     const white = s.mode === "white";
     const paletteBlock = `<div class="row" style="align-items:flex-start"><label>Colours</label><div style="flex:1"><div id="colors"></div><button class="secondary mini" id="add-color" style="margin-top:6px">+ Add colour</button><span class="hint"> up to ${MAX_COLORS}; ▶ previews on the current targets</span></div></div>`;
-    const kelvinBlock = `<div class="row" style="align-items:flex-start"><label>Kelvin</label><div style="flex:1">
-        <div class="color-row"><input type="range" id="f-kelvin" min="2000" max="6500" step="100" value="${s.kelvin}"><code id="kelvin-val">${s.kelvin} K</code><i class="sw" id="kelvin-sw" style="background:${kelvinToHex(s.kelvin)}"></i><button class="mini" id="kelvin-prev" title="Preview">▶</button></div>
-        <span class="hint">One colour temperature for white-capable lights (e.g. the ceiling lights). ▶ previews on the current targets.</span>
-      </div></div>`;
+    const kelvinBlock = `<div class="row" style="align-items:flex-start"><label>Kelvin</label><div style="flex:1"><div id="kelvins"></div><button class="secondary mini" id="add-kelvin" style="margin-top:6px">+ Add Kelvin</button><span class="hint"> up to ${MAX_COLORS}; the scene sweeps smoothly through the values (interval = step time); ▶ previews on the current targets</span></div></div>`;
     root.innerHTML = `${this._backBar(s.slug ? "Edit scene" : "Create scene")}
       <div class="card">
         <div class="row"><label>Name</label><input type="text" id="f-name" style="flex:1;min-width:200px"></div>
@@ -636,12 +645,24 @@ class BenniScenePresetsPanel extends HTMLElement {
     q("#f-img").addEventListener("change", (e) => { if (e.target.files && e.target.files[0]) this._uploadImage(e.target.files[0], s); });
     q("#b-save").addEventListener("click", () => this._saveScene());
     if (white) {
-      q("#f-kelvin").addEventListener("input", (e) => { s.kelvin = e.target.value; q("#kelvin-val").textContent = `${e.target.value} K`; q("#kelvin-sw").style.background = kelvinToHex(Number(e.target.value)); });
-      q("#kelvin-prev").addEventListener("click", () => this._previewKelvin(s.kelvin));
+      q("#add-kelvin").addEventListener("click", () => { if (s.kelvins.length < MAX_COLORS) { s.kelvins.push(3000); this._renderKelvins(); } });
+      this._renderKelvins();
     } else {
       q("#add-color").addEventListener("click", () => { if (s.colors.length < MAX_COLORS) { s.colors.push("#ffffff"); this._renderColors(); } });
       this._renderColors();
     }
+  }
+  _renderKelvins() {
+    const wrap = this.shadowRoot.getElementById("kelvins"); if (!wrap) return; const s = this._editing; wrap.innerHTML = "";
+    s.kelvins.forEach((k, idx) => {
+      const row = document.createElement("div"); row.className = "color-row";
+      row.innerHTML = `<input type="range" min="2000" max="6500" step="100" value="${k}"><code>${k} K</code><i class="sw" style="background:${kelvinToHex(k)}"></i><button class="mini" title="Preview">▶</button><button class="mini secondary" title="Remove">✕</button>`;
+      const slider = row.querySelector("input"); const code = row.querySelector("code"); const sw = row.querySelector(".sw"); const [prev, del] = row.querySelectorAll("button");
+      slider.addEventListener("input", (e) => { s.kelvins[idx] = Number(e.target.value); code.textContent = `${e.target.value} K`; sw.style.background = kelvinToHex(Number(e.target.value)); });
+      prev.addEventListener("click", () => this._previewKelvin(s.kelvins[idx]));
+      del.addEventListener("click", () => { s.kelvins.splice(idx, 1); if (!s.kelvins.length) s.kelvins = [3000]; this._renderKelvins(); });
+      wrap.appendChild(row);
+    });
   }
   _renderColors() {
     const wrap = this.shadowRoot.getElementById("colors"); if (!wrap) return; const s = this._editing; wrap.innerHTML = "";

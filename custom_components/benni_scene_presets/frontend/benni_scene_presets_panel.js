@@ -10,6 +10,8 @@ const DOMAIN = "benni_scene_presets";
 const AQARA_DOMAIN = "aqara_advanced_lighting";
 const MAX_COLORS = 10;
 const FAV_KEY = "bsp_favorites";
+// HA light colour modes that count as "can show a colour" (vs color_temp/brightness).
+const COLOR_MODES = ["xy", "hs", "rgb", "rgbw", "rgbww"];
 
 // Mirror of const.AQARA_STOP_SERVICES: which AAL stop service undoes each start.
 const AQARA_STOP_SERVICES = {
@@ -120,20 +122,54 @@ class BenniScenePresetsPanel extends HTMLElement {
 
   // ---- targets -------------------------------------------------------------
 
-  _isAqaraLight(id) {
-    const ent = this._hass.entities && this._hass.entities[id];
-    return !!(ent && ent.platform === AQARA_DOMAIN);
+  // --- capability detection (supported_color_modes) ---
+  _lightModes(id) {
+    const st = this._hass.states && this._hass.states[id];
+    return (st && st.attributes && st.attributes.supported_color_modes) || [];
   }
-  // For SP-scene targeting we exclude AAL RGBIC lights (those want Aqara effects,
-  // not a static colour). includeAqara=true for the generic picker.
-  _targetEntities(includeAqara) {
+  _hasColor(id) { return this._lightModes(id).some((m) => COLOR_MODES.includes(m)); }
+  _hasCCT(id) { return this._lightModes(id).includes("color_temp"); }
+  _capLabel(id) {
+    const rgb = this._hasColor(id), cct = this._hasCCT(id);
+    return rgb && cct ? "RGB+CCT" : rgb ? "RGB" : cct ? "CCT" : "";
+  }
+  // A light passes a capability mode:
+  //  "white" -> CCT-only (color_temp, no colour mode): the white ceiling lights
+  //  "color" -> has a colour mode (xy/hs/rgb*)
+  //  "all"   -> any light
+  _lightPasses(id, mode) {
+    if (mode === "white") return this._hasCCT(id) && !this._hasColor(id);
+    if (mode === "color") return this._hasColor(id);
+    return true;
+  }
+  _groupMembers(id) {
+    const st = this._hass.states && this._hass.states[id];
+    const m = st && st.attributes && st.attributes.entity_id;
+    return m ? [].concat(m) : [];
+  }
+  // A group passes if every one of its (light) members passes.
+  _groupPasses(id, mode) {
+    if (mode === "all") return true;
+    const members = this._groupMembers(id).filter((m) => m.startsWith("light."));
+    return members.length > 0 && members.every((m) => this._lightPasses(m, mode));
+  }
+  // Lights/groups offered to the picker, filtered by capability mode.
+  _targetEntities(mode = "all") {
     const states = this._hass.states || {};
     const groups = Object.keys(states)
-      .filter((id) => id.startsWith("group.") || id.startsWith("sensor.benni_light_group_"))
+      .filter((id) => (id.startsWith("group.") || id.startsWith("sensor.benni_light_group_")) && this._groupPasses(id, mode))
       .sort().map((id) => ({ id, label: (states[id].attributes && states[id].attributes.friendly_name) || id }));
-    const lights = Object.keys(states).filter((id) => id.startsWith("light.") && (includeAqara || !this._isAqaraLight(id))).sort()
-      .map((id) => ({ id, label: id }));
+    const lights = Object.keys(states)
+      .filter((id) => id.startsWith("light.") && this._lightPasses(id, mode))
+      .sort().map((id) => ({ id, label: id, cap: this._capLabel(id) }));
     return { groups, lights };
+  }
+  // Target capability mode for a scene binding, derived from the bound scene.
+  _sceneTargetMode(slug) {
+    if (!slug) return "all";
+    const p = this._presets.find((x) => x.slug === slug);
+    if (!p) return "all";
+    return p.kelvin != null ? "white" : "color";
   }
   _expandList(ids) {
     const states = this._hass.states || {};
@@ -661,13 +697,19 @@ class BenniScenePresetsPanel extends HTMLElement {
     wrap.innerHTML = "";
     l.bindings.forEach((b, idx) => {
       const kind = b.kind || "scene";
-      // Scene bindings exclude AAL RGBIC lights; aqara/effect include all.
-      const { groups, lights } = this._targetEntities(kind !== "scene");
+      // Scene bindings filter lights by the bound scene's capability (a Kelvin
+      // scene only lists white-capable ceiling lights; a colour scene lists
+      // colour-capable lights). Aqara/effect bindings list everything.
+      const mode = kind === "scene" ? this._sceneTargetMode(b.scene) : "all";
+      const { groups, lights } = this._targetEntities(mode);
+      const modeHint = mode === "white" ? `<div class="hint" style="margin-bottom:6px">Kelvin scene — only white-capable lights shown.</div>`
+        : mode === "color" ? `<div class="hint" style="margin-bottom:6px">Colour scene — only colour-capable lights shown.</div>` : "";
       const checks = `<div class="targets-box" style="flex:1;min-width:240px">
+        ${modeHint}
         ${groups.length ? `<div class="tgt-head">Groups</div>` : ""}
         ${groups.map((g) => `<label class="tgt"><input type="checkbox" class="b-tgt" value="${g.id}" ${b.entity_ids.includes(g.id) ? "checked" : ""}> ${esc(g.label)} <span class="hint">(group)</span></label>`).join("")}
         ${groups.length ? `<div class="tgt-head">Lights</div>` : ""}
-        ${lights.map((x) => `<label class="tgt"><input type="checkbox" class="b-tgt" value="${x.id}" ${b.entity_ids.includes(x.id) ? "checked" : ""}> ${esc(x.label)}</label>`).join("")}
+        ${lights.map((x) => `<label class="tgt"><input type="checkbox" class="b-tgt" value="${x.id}" ${b.entity_ids.includes(x.id) ? "checked" : ""}> ${esc(x.label)}${x.cap ? ` <span class="cap">${x.cap}</span>` : ""}</label>`).join("") || `<div class="hint pad">No matching lights.</div>`}
       </div>`;
       const sceneRows = `<div class="row"><label>Scene</label><select class="b-scene" style="min-width:220px"><option value="">– pick a scene –</option>${this._presets.map((p) => `<option value="${p.slug}" ${b.scene === p.slug ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>
         <div class="row"><label>Interval (s)</label><input type="number" class="b-int" placeholder="scene default" style="width:120px" value="${b.interval}"><label style="min-width:auto;margin-left:12px">Transition (s)</label><input type="number" class="b-trn" placeholder="scene default" style="width:120px" value="${b.transition}"></div>`;
@@ -682,21 +724,32 @@ class BenniScenePresetsPanel extends HTMLElement {
       card.querySelector(".b-rm").addEventListener("click", () => { l.bindings.splice(idx, 1); if (!l.bindings.length) l.bindings = [this._blankBinding()]; this._renderBindings(); });
       if (kind === "aqara") card.querySelector(".b-aqara").addEventListener("change", (e) => (b.aqara = e.target.value));
       else if (kind === "effect") { card.querySelector(".b-svc").addEventListener("input", (e) => (b.service = e.target.value)); card.querySelector(".b-eff").addEventListener("input", (e) => (b.effect = e.target.value)); }
-      else { card.querySelector(".b-scene").addEventListener("change", (e) => (b.scene = e.target.value)); card.querySelector(".b-int").addEventListener("input", (e) => (b.interval = e.target.value)); card.querySelector(".b-trn").addEventListener("input", (e) => (b.transition = e.target.value)); }
+      else {
+        card.querySelector(".b-scene").addEventListener("change", (e) => {
+          b.scene = e.target.value;
+          // Drop any selected targets that the new scene's capability rejects.
+          const mode = this._sceneTargetMode(b.scene);
+          b.entity_ids = b.entity_ids.filter((id) =>
+            id.startsWith("light.") ? this._lightPasses(id, mode) : this._groupPasses(id, mode));
+          this._renderBindings();
+        });
+        card.querySelector(".b-int").addEventListener("input", (e) => (b.interval = e.target.value));
+        card.querySelector(".b-trn").addEventListener("input", (e) => (b.transition = e.target.value));
+      }
       wrap.appendChild(card);
     });
   }
 
   _renderTargetsEditor(root) {
-    const t = this._tunables; const { groups, lights } = this._targetEntities(false);
+    const t = this._tunables; const { groups, lights } = this._targetEntities("all");
     root.innerHTML = `${this._backBar("Edit Targets & Options")}
       <div class="card">
-        <div class="hint" style="margin-bottom:6px">Pick lights and/or groups. (Aqara RGBIC lights aren't listed — they belong in Aqara presets/looks.)</div>
+        <div class="hint" style="margin-bottom:6px">Pick lights and/or groups. Tags show each light's capability (RGB / CCT). Scene tiles will only apply to lights they can drive.</div>
         <div class="targets-box" style="max-height:260px">
           ${groups.length ? `<div class="tgt-head">Groups</div>` : ""}
           ${groups.map((g) => `<label class="tgt"><input type="checkbox" class="g-tgt" value="${g.id}" ${this._targets.includes(g.id) ? "checked" : ""}> ${esc(g.label)} <span class="hint">(group)</span></label>`).join("")}
           ${groups.length ? `<div class="tgt-head">Lights</div>` : ""}
-          ${lights.map((x) => `<label class="tgt"><input type="checkbox" class="g-tgt" value="${x.id}" ${this._targets.includes(x.id) ? "checked" : ""}> ${esc(x.label)}</label>`).join("")}
+          ${lights.map((x) => `<label class="tgt"><input type="checkbox" class="g-tgt" value="${x.id}" ${this._targets.includes(x.id) ? "checked" : ""}> ${esc(x.label)}${x.cap ? ` <span class="cap">${x.cap}</span>` : ""}</label>`).join("")}
         </div>
         <div class="card-title" style="margin-top:14px">Options</div>
         <div class="tun">
@@ -786,6 +839,7 @@ class BenniScenePresetsPanel extends HTMLElement {
       .targets-box { max-height:200px; overflow:auto; border:1px solid var(--divider-color,#2a2f37); border-radius:8px; padding:8px; }
       .tgt { display:flex; align-items:center; gap:8px; padding:3px 4px; font-size:14px; cursor:pointer; } .tgt:hover { background:var(--card-background-color,#15181d); border-radius:6px; } .tgt input { min-width:auto; }
       .tgt-head { font-size:12px; font-weight:600; color:var(--secondary-text-color); margin:8px 2px 2px; }
+      .cap { font-size:10px; color:var(--secondary-text-color); border:1px solid var(--divider-color,#2a2f37); border-radius:5px; padding:0 5px; margin-left:4px; }
       .tun { display:flex; gap:14px; align-items:center; flex-wrap:wrap; } .tun label { display:flex; gap:6px; align-items:center; min-width:auto; }
       .color-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; } .color-row code { font-family:monospace; }
       .imgprev { width:120px; height:70px; object-fit:cover; border-radius:8px; }

@@ -67,6 +67,7 @@ class DynamicScene:
                 self.parameters.get(ATTR_SHUFFLE),
                 smart_shuffle,
                 self.parameters.get(ATTR_BRIGHTNESS, None),
+                step=run_count,  # advances a Kelvin scene's sweep through its values
             )
             run_count += 1
 

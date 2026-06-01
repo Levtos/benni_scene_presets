@@ -63,10 +63,11 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             vol.Required("name"): str,
             vol.Optional("category"): vol.Any(str, None),
             vol.Optional("img"): vol.Any(str, None),
-            # Colour scene: a palette of hex colours. Kelvin scene: a single
-            # colour temperature instead (colours are then ignored/empty).
+            # Colour scene: a palette of hex colours. Kelvin scene: a list of
+            # colour temperatures the scene sweeps through (colours then empty).
             vol.Optional("colors", default=[]): [str],
-            vol.Optional("kelvin"): vol.Any(int, None),
+            vol.Optional("kelvins"): vol.Any([vol.Coerce(int)], None),
+            vol.Optional("kelvin"): vol.Any(int, None),  # legacy single value
             vol.Optional("interval", default=300): vol.Coerce(int),
             vol.Optional("transition", default=60): vol.Coerce(int),
             vol.Optional("shuffle", default=True): bool,
@@ -75,7 +76,10 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
     @websocket_api.require_admin
     @websocket_api.async_response
     async def ws_save_preset(hass, connection, msg) -> None:
-        kelvin = msg.get("kelvin")
+        # Accept a Kelvin list (new) or a single legacy kelvin value.
+        kelvins = msg.get("kelvins")
+        if not kelvins and msg.get("kelvin") is not None:
+            kelvins = [msg["kelvin"]]
 
         preset = {
             "name": msg["name"],
@@ -84,8 +88,8 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             "shuffle": msg["shuffle"],
         }
 
-        if kelvin is not None:
-            preset["kelvin"] = int(kelvin)
+        if kelvins:
+            preset["kelvins"] = [int(k) for k in kelvins[:10]]
             preset["lights"] = []
         else:
             if not msg["colors"]:
@@ -245,12 +249,15 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
     async def ws_apply_preview(hass, connection, msg) -> None:
         entity_ids = _resolve_target_entities(hass, msg["targets"])
 
-        # Kelvin preview (live from the editor slider, or a saved kelvin scene).
+        # Kelvin preview (live from an editor row, or a saved kelvin scene —
+        # previews its first value).
         kelvin = msg.get("kelvin")
         if kelvin is None and msg.get("preset"):
             preset = file_utils.find_preset(msg["preset"])
-            if preset and preset.get("kelvin") is not None:
-                kelvin = preset["kelvin"]
+            if preset:
+                kl = preset.get("kelvins") or ([preset["kelvin"]] if preset.get("kelvin") is not None else None)
+                if kl:
+                    kelvin = kl[0]
         if kelvin is not None:
             if entity_ids:
                 await apply_kelvin(hass, int(kelvin), entity_ids, msg["transition"], msg["brightness"])

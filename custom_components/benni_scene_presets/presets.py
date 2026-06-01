@@ -117,6 +117,32 @@ async def apply_kelvin(hass, kelvin, light_entity_ids, transition, brightness):
     await asyncio.gather(*tasks)
 
 
+def _sweep_value(values, step):
+    """Pick the value for a given step, sweeping smoothly back and forth.
+
+    A list [A, B, C] yields A, B, C, B, A, B, C, ... (triangle wave) so the
+    colour temperature glides up and down the range instead of snapping from
+    the last value back to the first.
+    """
+    if len(values) <= 1:
+        return values[0]
+    period = 2 * (len(values) - 1)
+    pos = step % period
+    return values[pos] if pos < len(values) else values[period - pos]
+
+
+def _preset_kelvins(preset_data):
+    """The scene's list of Kelvin values, or None if it isn't a Kelvin scene.
+
+    Supports the new `kelvins` list and the legacy single `kelvin` field.
+    """
+    kelvins = preset_data.get("kelvins")
+    if kelvins:
+        return list(kelvins)
+    single = preset_data.get("kelvin")
+    return [single] if single is not None else None
+
+
 async def apply_preset(
     hass,
     preset_ident,
@@ -124,7 +150,8 @@ async def apply_preset(
     transition,
     shuffle,
     smart_shuffle,
-    brightness_override=None
+    brightness_override=None,
+    step=0
 ):
     preset_data = find_preset(preset_ident)
 
@@ -133,9 +160,11 @@ async def apply_preset(
 
     brightness = brightness_override if brightness_override else preset_data.get("bri", 255)
 
-    kelvin = preset_data.get("kelvin")
-    if kelvin is not None:
-        await apply_kelvin(hass, kelvin, light_entity_ids, transition, brightness)
+    kelvins = _preset_kelvins(preset_data)
+    if kelvins is not None:
+        # All lights share one colour temperature per step; the dynamic loop
+        # advances `step` so a multi-value scene sweeps through the range.
+        await apply_kelvin(hass, _sweep_value(kelvins, step), light_entity_ids, transition, brightness)
         return
 
     preset_colors = [(light["x"], light["y"]) for light in preset_data["lights"]]

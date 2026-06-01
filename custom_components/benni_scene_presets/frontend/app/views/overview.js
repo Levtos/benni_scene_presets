@@ -1,7 +1,7 @@
 // Screen 01 — Overview / Looks.
-// The home screen shows only deployable Looks. Scenes (RGB/Kelvin/Aqara) live
-// in their own libraries and never appear here as primary cards. A Look gets
-// Play/Stop/Edit; the right panel shows its composition, coverage and validation.
+// Home screen showing only deployable Looks. A Look gets Play/Stop/Edit; the
+// right panel shows its composition, coverage and validation. Scenes live in
+// their own libraries and never appear here as primary cards.
 
 import { DOMAIN, esc } from "../store.js";
 import { gradientFor } from "../styles.js";
@@ -68,11 +68,8 @@ function detailPanel(ctx) {
   return `
   <div class="detail">
     <h3>${esc(look.name)}</h3>
-    <div class="slug"><code>${esc(look.slug)}</code><span class="iconbtn sm" data-copy="${esc(look.slug)}" title="Copy slug" style="width:24px;height:24px;font-size:11px">⧉</span></div>
-    <div class="section">
-      <div class="h">Composition</div>
-      ${bindings}
-    </div>
+    <div class="slug"><code>${esc(look.slug)}</code><span class="iconbtn" data-copy="${esc(look.slug)}" title="Copy slug" style="width:24px;height:24px;font-size:11px">⧉</span></div>
+    <div class="section"><div class="h">Composition</div>${bindings}</div>
     <div class="section">
       <div class="h">Coverage &amp; Validation</div>
       ${check(info.checks.hasBindings, "Has at least one binding")}
@@ -80,10 +77,7 @@ function detailPanel(ctx) {
       ${check(info.checks.allSupported, info.unsupported ? `${info.unsupported} unsupported target(s)` : "All targets supported")}
       <div class="check"><span class="mk" style="color:var(--cyan)">◆</span>${info.lightCount} light${info.lightCount === 1 ? "" : "s"} covered</div>
     </div>
-    <div class="section">
-      <div class="h">Capability Summary</div>
-      <div>${capChips}</div>
-    </div>
+    <div class="section"><div class="h">Capability Summary</div><div>${capChips}</div></div>
     <div class="cta">
       ${playing
         ? `<div class="btn danger" data-stop="${esc(look.slug)}">■ Stop</div>`
@@ -108,10 +102,9 @@ function matches(ctx, look) {
 }
 
 export function render(ctx) {
-  const { store, ui, favs } = ctx;
+  const { store, ui } = ctx;
   const looks = store.looks.filter((l) => matches(ctx, l));
   const running = store.looks.filter((l) => store.isLookRunning(l.slug));
-
   const tabs = FILTERS.map(([k, l]) => `<span class="chip ${ui.filter === k ? "active" : ""}" data-filter="${k}">${l}</span>`).join("");
 
   const cards = looks.length
@@ -127,28 +120,59 @@ export function render(ctx) {
 
   return `
   <div class="page-head">
-    <div>
-      <h1>Looks</h1>
-      <div class="sub">Deployable light scenes — Play, Stop and manage your looks.</div>
-    </div>
+    <div><h1>Looks</h1><div class="sub">Deployable light scenes — Play, Stop and manage your looks.</div></div>
     <div class="spacer"></div>
     <div class="search"><span class="ic">⌕</span><input data-input="search" placeholder="Search looks…" value="${esc(ui.search || "")}"></div>
     <div class="btn primary" data-new="look">＋ New Look</div>
   </div>
   <div class="tabs">${tabs}</div>
-  <div class="split">
-    <div>${cards}</div>
-    ${detailPanel(ctx)}
-  </div>
+  <div class="split"><div>${cards}</div>${detailPanel(ctx)}</div>
   <div class="panels">
     <div class="panel"><div class="h">Now Playing</div>${nowPlaying}</div>
     <div class="panel">
       <div class="h">Quick Actions</div>
-      <div class="qa">
-        <div class="btn" data-act="stop-all">■ Stop all</div>
-        <div class="btn danger" data-act="off-all">⏻ Off all</div>
-      </div>
+      <div class="qa"><div class="btn" data-act="stop-all">■ Stop all</div><div class="btn danger" data-act="off-all">⏻ Off all</div></div>
       <div class="sub" style="margin-top:10px;color:var(--comment);font-size:11.5px">Stop all keeps lights on. Off all turns the integration's lights off.</div>
     </div>
   </div>`;
+}
+
+export function onClick(ctx, e) {
+  const { store, ui } = ctx;
+  const t = (sel) => e.target.closest(sel);
+  let el;
+  if ((el = t("[data-filter]"))) { ui.filter = el.dataset.filter; ctx.renderMain(); return; }
+  if ((el = t("[data-play]"))) { e.stopPropagation(); play(ctx, el.dataset.play); return; }
+  if ((el = t("[data-stop]"))) { e.stopPropagation(); stop(ctx, el.dataset.stop); return; }
+  if ((el = t("[data-edit]"))) { e.stopPropagation(); const lk = store.looks.find((l) => l.slug === el.dataset.edit); if (lk) { ctx.views.composer.editFrom(ctx, lk); ctx.navigate("composer"); } return; }
+  if ((el = t("[data-del]"))) { e.stopPropagation(); del(ctx, el.dataset.del); return; }
+  if ((el = t("[data-new]"))) { e.stopPropagation(); ctx.views.composer.startNew(ctx); ctx.navigate("composer"); return; }
+  if ((el = t("[data-act]"))) { e.stopPropagation(); quick(ctx, el.dataset.act); return; }
+  if ((el = t("[data-look]"))) { ui.selected = el.dataset.look; ctx.renderMain(); return; }
+}
+
+async function play(ctx, slug) {
+  const look = ctx.store.looks.find((l) => l.slug === slug);
+  try { await ctx.store.applyLook(slug); ctx.toast(`Look "${look ? look.name : slug}" applied.`); }
+  catch (err) { ctx.toast(`Apply failed: ${err.message || err}`); }
+  await ctx.refresh();
+}
+async function stop(ctx, slug) {
+  try { await ctx.store.stopLook(slug); ctx.toast("Stopped."); }
+  catch (err) { ctx.toast(`Stop failed: ${err.message || err}`); }
+  await ctx.refresh();
+}
+async function del(ctx, slug) {
+  const look = ctx.store.looks.find((l) => l.slug === slug);
+  if (!confirm(`Delete look "${look ? look.name : slug}"?`)) return;
+  try { await ctx.store.deleteLook(slug); ctx.toast("Deleted."); if (ctx.ui.selected === slug) ctx.ui.selected = null; }
+  catch (err) { ctx.toast(`Delete failed: ${err.message || err}`); }
+  await ctx.refresh();
+}
+async function quick(ctx, act) {
+  try {
+    if (act === "stop-all") { await ctx.store.stopAll(); ctx.toast("All scenes stopped."); }
+    if (act === "off-all") { const n = await ctx.store.offAll(); ctx.toast(`Stopped & turned off ${n} light${n === 1 ? "" : "s"}.`); }
+  } catch (err) { ctx.toast(`Failed: ${err.message || err}`); }
+  await ctx.refresh();
 }

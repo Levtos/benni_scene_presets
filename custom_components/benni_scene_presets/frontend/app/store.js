@@ -4,6 +4,7 @@
 
 export const DOMAIN = "benni_scene_presets";
 export const AQARA_DOMAIN = "aqara_advanced_lighting";
+export const MAX_STOPS = 10;
 // HA light colour modes that count as "can show a colour" (vs color_temp only).
 const COLOR_MODES = ["xy", "hs", "rgb", "rgbw", "rgbww"];
 
@@ -11,6 +12,18 @@ export const slugify = (name) =>
   ((name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")) || "item";
 export const esc = (s) =>
   s == null ? "" : String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// Kelvin -> #rrggbb (Tanner Helland approximation), only for swatches/gradients.
+export const kelvinToHex = (kelvin) => {
+  const k = Math.min(40000, Math.max(1000, kelvin)) / 100;
+  const bound = (v) => Math.min(255, Math.max(0, v));
+  const r = k <= 66 ? 255 : bound(329.698727446 * Math.pow(k - 60, -0.1332047592));
+  const g = k <= 66 ? bound(99.4708025861 * Math.log(k) - 161.1195681661)
+                    : bound(288.1221695283 * Math.pow(k - 60, -0.0755148492));
+  const b = k >= 66 ? 255 : k <= 19 ? 0 : bound(138.5177312231 * Math.log(k - 10) - 305.0447927307);
+  const h = (v) => Math.round(v).toString(16).padStart(2, "0");
+  return `#${h(r)}${h(g)}${h(b)}`;
+};
 
 export class Store {
   constructor() {
@@ -32,15 +45,28 @@ export class Store {
     try { const d = await h.callWS({ type: `${DOMAIN}/get_dynamic_scenes` }); this.dynamic = d.dynamic_scenes || []; } catch { this.dynamic = []; }
   }
 
-  // --- scene classification (shared with the libraries later) ---
+  // --- scene classification ---
   presetKelvins(p) {
     if (p && p.kelvins && p.kelvins.length) return p.kelvins;
     if (p && p.kelvin != null) return [p.kelvin];
     return null;
   }
   isKelvinScene(p) { return this.presetKelvins(p) != null; }
+  rgbScenes() { return this.presets.filter((p) => !this.isKelvinScene(p)); }
+  kelvinScenes() { return this.presets.filter((p) => this.isKelvinScene(p)); }
   findPreset(slug) { return this.presets.find((p) => p.slug === slug || p.name === slug); }
   findAqara(slug) { return this.aqara.find((a) => a.slug === slug || a.name === slug); }
+  categories(list) { return [...new Set((list || this.presets).map((p) => p.category).filter(Boolean))].sort(); }
+
+  // A scene with more than one value runs as a dynamic loop; a single value paints once.
+  isDynamicScene(p) {
+    const kl = this.presetKelvins(p);
+    if (kl) return kl.length > 1;
+    return (p.lights || []).length > 1;
+  }
+  // Looks referencing a given scene slug — for "Used in Looks".
+  looksUsingScene(slug) { return this.looks.filter((l) => (l.bindings || []).some((b) => b.scene === slug)); }
+  looksUsingAqara(slug) { return this.looks.filter((l) => (l.bindings || []).some((b) => b.aqara === slug)); }
 
   // --- capability detection from supported_color_modes ---
   lightModes(id) {
@@ -57,6 +83,24 @@ export class Store {
     const st = this.hass.states && this.hass.states[id];
     return (st && st.attributes && st.attributes.friendly_name) || id;
   }
+  area(id) {
+    // HA exposes area via entity registry; fall back to "Ungrouped" if unknown.
+    const ent = this.hass.entities && this.hass.entities[id];
+    const areaId = ent && ent.area_id;
+    if (areaId && this.hass.areas && this.hass.areas[areaId]) return this.hass.areas[areaId].name;
+    // device -> area fallback
+    if (ent && ent.device_id && this.hass.devices && this.hass.devices[ent.device_id]) {
+      const dev = this.hass.devices[ent.device_id];
+      if (dev.area_id && this.hass.areas && this.hass.areas[dev.area_id]) return this.hass.areas[dev.area_id].name;
+    }
+    return "Ungrouped";
+  }
+
+  groupMembers(id) {
+    const st = this.hass.states && this.hass.states[id];
+    const m = st && st.attributes && st.attributes.entity_id;
+    return m ? [].concat(m) : [];
+  }
   // Expand groups / benni light-group sensors to their member light entities.
   expandList(ids) {
     const states = this.hass.states || {};
@@ -70,6 +114,35 @@ export class Store {
     return [...new Set(out)];
   }
 
+  // capability mode: "white" = CCT-only, "color" = has a colour mode, "all" = any.
+  lightPasses(id, mode) {
+    if (mode === "white") return this.hasCCT(id) && !this.hasColor(id);
+    if (mode === "color") return this.hasColor(id);
+    return true;
+  }
+  groupPasses(id, mode) {
+    if (mode === "all") return true;
+    const members = this.groupMembers(id).filter((m) => m.startsWith("light."));
+    return members.length > 0 && members.every((m) => this.lightPasses(m, mode));
+  }
+  // Lights/groups offered to a picker, filtered by capability mode.
+  targetEntities(mode = "all") {
+    const states = this.hass.states || {};
+    const groups = Object.keys(states)
+      .filter((id) => (id.startsWith("group.") || id.startsWith("sensor.benni_light_group_")) && this.groupPasses(id, mode))
+      .sort().map((id) => ({ id, label: this.friendly(id), group: true, area: "Groups" }));
+    const lights = Object.keys(states)
+      .filter((id) => id.startsWith("light.") && this.lightPasses(id, mode))
+      .sort().map((id) => ({ id, label: this.friendly(id), cap: this.capLabel(id), area: this.area(id) }));
+    return { groups, lights };
+  }
+  // Capability mode a scene binding wants, derived from the bound scene.
+  sceneTargetMode(slug) {
+    const p = this.findPreset(slug);
+    if (!p) return "all";
+    return this.isKelvinScene(p) ? "white" : "color";
+  }
+
   // --- running state ---
   isLookRunning(slug) {
     const st = this.hass.states && this.hass.states[`switch.benni_look_${slug}`];
@@ -79,7 +152,7 @@ export class Store {
     return (this.dynamic || []).length > 0 || this.looks.some((l) => this.isLookRunning(l.slug));
   }
 
-  // --- per-binding capability kind, for the capability summary chips ---
+  // --- per-binding capability kind, for capability summary chips ---
   bindingKind(b) {
     const k = b.kind || "scene";
     if (k === "off") return "off";
@@ -89,10 +162,10 @@ export class Store {
     return p && this.isKelvinScene(p) ? "cct" : "rgb";
   }
 
-  // --- coverage + validation for a Look (drives the detail panel) ---
+  // --- coverage + validation for a Look (detail panel + composer panel) ---
   lookInfo(look) {
     const bindings = look.bindings || [];
-    const seen = new Map();        // light -> count (across bindings)
+    const seen = new Map();
     const caps = { rgb: 0, cct: 0, rgbcct: 0, off: 0, aqara: 0, raw: 0 };
     let unsupported = 0;
     const allLights = new Set();
@@ -100,12 +173,11 @@ export class Store {
     for (const b of bindings) {
       const kind = this.bindingKind(b);
       caps[kind] = (caps[kind] || 0) + 1;
-      const lights = this.expandList((b.targets && [].concat(b.targets.entity_id || [])) || []);
+      const lights = this.expandList((b.targets && [].concat(b.targets.entity_id || [])) || (b.entity_ids || []));
       for (const id of lights) {
         if (!id.startsWith("light.")) continue;
         allLights.add(id);
         seen.set(id, (seen.get(id) || 0) + 1);
-        // capability mismatch: RGB scene on a CCT-only light, or Kelvin on a colour-only light
         if (kind === "rgb" && !this.hasColor(id)) unsupported++;
         else if (kind === "cct" && !this.hasCCT(id) && !this.hasColor(id)) unsupported++;
       }
@@ -136,7 +208,6 @@ export class Store {
   stopLook(slug) { return this.hass.callService(DOMAIN, "stop_look", { look: slug }); }
   stopAll() { return this.hass.callService(DOMAIN, "stop_all_dynamic_scenes", {}); }
 
-  // Lights currently driven by running looks (their bindings' targets).
   controlledLights() {
     const lights = new Set();
     for (const d of this.dynamic || []) {
@@ -150,16 +221,46 @@ export class Store {
     }
     return [...lights].filter((id) => id.startsWith("light."));
   }
-
   async offAll() {
     const lights = this.controlledLights();
     await this.stopAll();
-    for (const l of this.looks) {
-      if (this.isLookRunning(l.slug)) await this.stopLook(l.slug);
-    }
+    for (const l of this.looks) if (this.isLookRunning(l.slug)) await this.stopLook(l.slug);
     if (lights.length) await this.hass.callService("light", "turn_off", { entity_id: lights });
     return lights.length;
   }
 
+  // Preview a scene/colours/kelvin on the given lights (no persistence).
+  applyPreview({ entity_id, colors, kelvin, transition = 1, brightness }) {
+    const msg = { type: `${DOMAIN}/apply_preview`, targets: { entity_id }, transition };
+    if (colors) msg.colors = colors;
+    if (kelvin != null) msg.kelvin = Number(kelvin);
+    if (brightness != null) msg.brightness = Number(brightness);
+    return this.hass.callWS(msg);
+  }
+
+  // --- CRUD ---
+  savePreset(payload) { return this.hass.callWS({ type: `${DOMAIN}/save_preset`, ...payload }); }
+  deletePreset(slug) { return this.hass.callWS({ type: `${DOMAIN}/delete_preset`, slug }); }
+  saveLook(payload) { return this.hass.callWS({ type: `${DOMAIN}/save_look`, ...payload }); }
   deleteLook(slug) { return this.hass.callWS({ type: `${DOMAIN}/delete_look`, slug }); }
+  saveAqara(payload) { return this.hass.callWS({ type: `${DOMAIN}/save_aqara`, ...payload }); }
+  deleteAqara(slug) { return this.hass.callWS({ type: `${DOMAIN}/delete_aqara`, slug }); }
+
+  // Aqara preset options read live from the AAL service schema (if installed).
+  aqaraPresetOptions(service) {
+    try {
+      const o = this.hass.services[AQARA_DOMAIN][service].fields.preset.selector.select.options;
+      return (o || []).map((x) => (typeof x === "string" ? { value: x, label: x } : x));
+    } catch { return []; }
+  }
+
+  async uploadImage(file) {
+    const form = new FormData(); form.append("file", file);
+    const resp = await fetch(`/api/${DOMAIN}/upload_image`, {
+      method: "POST", body: form,
+      headers: { Authorization: `Bearer ${this.hass.auth.data.access_token}` },
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    return (await resp.json()).img;
+  }
 }

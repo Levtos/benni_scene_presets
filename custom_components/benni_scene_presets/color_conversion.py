@@ -5,6 +5,8 @@ homeassistant.util.color.color_RGB_to_xy so it can be unit-tested without
 importing Home Assistant.
 """
 
+import math
+
 
 def _gamma(channel):
     channel = channel / 255.0
@@ -40,4 +42,44 @@ def hex_to_rgb(value):
 
 def hex_to_xy(value):
     r, g, b = hex_to_rgb(value)
+    return rgb_to_xy(r, g, b)
+
+
+def _bound(value, minimum=0, maximum=255):
+    return min(max(value, minimum), maximum)
+
+
+def color_temperature_to_rgb(kelvin):
+    """Approximate sRGB for a colour temperature in Kelvin.
+
+    Mirrors homeassistant.util.color.color_temperature_to_rgb (the
+    Tanner Helland / Neil Bartlett approximation) so kelvin_to_xy matches
+    what Home Assistant would produce, without importing Home Assistant.
+    """
+    kelvin = _bound(kelvin, 1000, 40000)
+    temp = kelvin / 100.0
+
+    if temp <= 66:
+        red = 255.0
+    else:
+        red = _bound(329.698727446 * ((temp - 60) ** -0.1332047592))
+
+    if temp <= 66:
+        green = _bound(99.4708025861 * math.log(temp) - 161.1195681661)
+    else:
+        green = _bound(288.1221695283 * ((temp - 60) ** -0.0755148492))
+
+    if temp >= 66:
+        blue = 255.0
+    elif temp <= 19:
+        blue = 0.0
+    else:
+        blue = _bound(138.5177312231 * math.log(temp - 10) - 305.0447927307)
+
+    return (red, green, blue)
+
+
+def kelvin_to_xy(kelvin):
+    """Colour temperature (Kelvin) -> CIE (x, y), for colour-only lights."""
+    r, g, b = color_temperature_to_rgb(kelvin)
     return rgb_to_xy(r, g, b)

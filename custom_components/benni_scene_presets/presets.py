@@ -4,6 +4,7 @@ import logging
 from .file_utils import find_preset
 from .color_management import *
 from .color_temperature import find_closest_ct_match
+from .color_conversion import kelvin_to_xy
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,6 +76,47 @@ async def apply_colors(
     await asyncio.gather(*tasks)
 
 
+async def apply_kelvin(hass, kelvin, light_entity_ids, transition, brightness):
+    """Paint a single colour temperature (Kelvin) onto the given lights.
+
+    CCT-capable lights get color_temp_kelvin directly; colour-only lights
+    fall back to the equivalent xy point. This is the apply path for a
+    "white"/Kelvin scene (no colour palette).
+    """
+    tasks = []
+
+    for entity_id in light_entity_ids:
+        hass_state = hass.states.get(entity_id)
+        if not hass_state:
+            continue
+
+        light_params = {
+            "brightness": brightness,
+            "transition": transition,
+            "entity_id": entity_id,
+        }
+
+        supported_color_modes = hass_state.attributes.get("supported_color_modes", "")
+        temp_support = "color_temp" in supported_color_modes
+        color_support = any(mode in supported_color_modes for mode in ["xy", "hs", "rgb", "rgbw", "rgbww"])
+        brightness_support = "brightness" in supported_color_modes
+
+        if temp_support:
+            light_params["color_temp_kelvin"] = kelvin
+        elif color_support:
+            light_params["xy_color"] = list(kelvin_to_xy(kelvin))
+        elif brightness_support:
+            pass  # Dimmable only — brightness is already in the payload.
+        else:
+            continue  # Can't represent a colour temperature on this light.
+
+        tasks.append(
+            hass.services.async_call("light", "turn_on", light_params, blocking=False)
+        )
+
+    await asyncio.gather(*tasks)
+
+
 async def apply_preset(
     hass,
     preset_ident,
@@ -90,6 +132,11 @@ async def apply_preset(
         raise vol.Invalid(f"Preset '{preset_ident}' not found.")
 
     brightness = brightness_override if brightness_override else preset_data.get("bri", 255)
+
+    kelvin = preset_data.get("kelvin")
+    if kelvin is not None:
+        await apply_kelvin(hass, kelvin, light_entity_ids, transition, brightness)
+        return
 
     preset_colors = [(light["x"], light["y"]) for light in preset_data["lights"]]
 

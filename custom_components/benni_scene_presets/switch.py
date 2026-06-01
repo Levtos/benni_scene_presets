@@ -44,7 +44,9 @@ class BenniLookSwitch(SwitchEntity):
         self._slug = slug
         self._attr_name = f"Look: {name}"
         self._attr_unique_id = f"{DOMAIN}_look_{slug}"
-        self.entity_id = f"switch.benni_look_{slug}"
+        # entity_ids must use underscores; slugs may contain hyphens (HA warns
+        # and will reject hyphenated entity_ids from 2027.2).
+        self.entity_id = f"switch.benni_look_{slug.replace('-', '_')}"
 
     @property
     def is_on(self):

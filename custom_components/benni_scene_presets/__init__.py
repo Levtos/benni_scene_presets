@@ -1,5 +1,6 @@
 import voluptuous as vol
 import homeassistant.helpers.config_validation as cv
+import asyncio
 import logging
 from homeassistant.core import HomeAssistant, SupportsResponse
 from homeassistant.config_entries import ConfigEntry
@@ -95,6 +96,31 @@ async def async_setup(hass, config):
             ensure_list(targets.get("label_id")),
         )
 
+    async def _wake_lights(entity_ids):
+        """Turn on any lights that are currently off, then let them settle.
+
+        Aqara T1M-style lights sit in a deep standby when off: the first
+        scene/effect payload arrives before the device is ready and is dropped,
+        so the effect only "takes" on the second apply. We adopt Aqara Advanced
+        Lighting's _ensure_light_on approach (absent42): turn the light on with
+        a blocking call and wait a beat before sending the real command, so the
+        device is awake when the scene/effect payload lands.
+        """
+        off_lights = [
+            eid for eid in entity_ids
+            if eid and eid.startswith("light.")
+            and (state := hass.states.get(eid)) and state.state == "off"
+        ]
+        if not off_lights:
+            return
+        try:
+            await hass.services.async_call(
+                "light", "turn_on", {"entity_id": off_lights}, blocking=True
+            )
+            await asyncio.sleep(0.3)  # let the device wake before the real command
+        except Exception as ex:  # noqa: BLE001 - best-effort wake, never block the look
+            _LOGGER.warning("Could not pre-wake lights %s: %s", off_lights, ex)
+
     def _start_scene(preset_ident, light_entity_ids, interval, brightness, transition, initial_transition, look=None):
         # always stop any existing actions on these lights first
         for light_entity_id in light_entity_ids:
@@ -151,6 +177,10 @@ async def async_setup(hass, config):
                     # set_dynamic_effect accepts turn_on; don't add it to others).
                     if aqara["service"] == "set_dynamic_effect":
                         data.setdefault("turn_on", True)
+                    # Pre-wake: AAL sends the effect payload before turning the
+                    # light on, which a cold-standby T1M drops (effect only takes
+                    # on the 2nd apply). Wake it first so the payload lands awake.
+                    await _wake_lights(raw_targets)
                     hass.async_create_task(
                         hass.services.async_call(AQARA_DOMAIN, aqara["service"], data, blocking=False)
                     )
@@ -188,6 +218,10 @@ async def async_setup(hass, config):
                         interval = preset.get("interval", 60)
                     if transition is None:
                         transition = preset.get("transition", 1)
+
+            # Pre-wake off lights (esp. Aqara CCT ceilings) so the scene's first
+            # paint isn't dropped while the device is still in standby.
+            await _wake_lights(light_entity_ids)
 
             started.append(_start_scene(
                 scene_ident,

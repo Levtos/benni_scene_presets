@@ -131,6 +131,9 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             vol.Optional("slug"): str,
             vol.Required("name"): str,
             vol.Optional("img"): vol.Any(str, None),
+            # Look-level default crossfade (seconds): scene bindings without their
+            # own transition use it, and `off` bindings fade out over it.
+            vol.Optional("transition"): vol.Any(int, None),
             vol.Required("bindings"): [
                 {
                     vol.Optional("kind", default="scene"): str,
@@ -161,6 +164,8 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
                     binding["service"] = b["service"]
                 if b.get("data") is not None:
                     binding["data"] = b["data"]
+            elif kind == "off":
+                pass  # off binding: just targets, turned off on apply
             else:
                 binding["scene"] = b.get("scene")
                 if b.get("interval") is not None:
@@ -174,6 +179,8 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             look["slug"] = msg["slug"]
         if msg.get("img"):
             look["img"] = msg["img"]
+        if msg.get("transition") is not None:
+            look["transition"] = msg["transition"]
 
         saved = await hass.async_add_executor_job(file_utils.save_look, look)
         async_dispatcher_send(hass, SIGNAL_LOOKS_CHANGED)

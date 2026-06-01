@@ -895,4 +895,9 @@ class BenniScenePresetsPanel extends HTMLElement {
   }
 }
 
-customElements.define("benni-scene-presets-panel", BenniScenePresetsPanel);
+// Guard against double-registration: after a HACS reload/restart the module
+// can be evaluated twice, and a bare define() then throws
+// "name has already been used with this registry".
+if (!customElements.get("benni-scene-presets-panel")) {
+  customElements.define("benni-scene-presets-panel", BenniScenePresetsPanel);
+}

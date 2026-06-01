@@ -250,6 +250,7 @@ class BenniScenePresetsPanel extends HTMLElement {
         if (this._tunables.customBri) data.brightness = Number(this._tunables.brightness);
         await this._hass.callService(DOMAIN, "apply_look", data);
         this._toast(`Look "${it.name}" applied.`);
+        this._refresh();  // refresh running state so the transport reflects it
         return;
       }
       const entity_id = this._resolveTargets();
@@ -519,7 +520,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     root.innerHTML = `
       <div class="topbar">
         <div class="brand"><span class="logo">◆</span><h1>Benni Scene Presets</h1></div>
-        <div class="actions">${this._anyRunning() ? `<button class="secondary danger" id="a-stopall">◼ Stop all</button><button class="secondary danger" id="a-offall" title="Stop everything and turn the lights off">⏻ Off all</button>` : ""}<button id="a-new">+ New Preset</button><button class="secondary" id="a-io">⇅ Import / Export</button></div>
+        <div class="actions"><button class="secondary danger" id="a-stopall" ${this._anyRunning() ? "" : "disabled"}>◼ Stop all</button><button class="secondary danger" id="a-offall" title="Stop everything and turn the lights off" ${this._anyRunning() ? "" : "disabled"}>⏻ Off all</button><button id="a-new">+ New Preset</button><button class="secondary" id="a-io">⇅ Import / Export</button></div>
       </div>
 
       <div class="card targets">
@@ -572,6 +573,7 @@ class BenniScenePresetsPanel extends HTMLElement {
       const dst = det.querySelector("#d-stop"); if (dst) dst.addEventListener("click", () => this._stop(this._selectedItem()));
       const ded = det.querySelector("#d-edit"); if (ded) ded.addEventListener("click", () => this._edit(this._selectedItem()));
       const dex = det.querySelector("#d-export"); if (dex) dex.addEventListener("click", () => this._exportScene(this._selectedItem().obj));
+      const dcs = det.querySelector("#d-copyslug"); if (dcs) dcs.addEventListener("click", () => this._copySlug(this._selectedItem().slug));
     }
     const nm = root.querySelector("#newmodal");
     if (nm) {
@@ -631,7 +633,9 @@ class BenniScenePresetsPanel extends HTMLElement {
         <div class="drow"><span>Targets</span><b>${esc(this._targetsLabel())}</b></div>`;
     } else {
       const bs = it.obj.bindings || [];
+      // The slug is what the light policy references (apply_look service).
       rows = `<div class="drow"><span>Type</span><b>Look</b></div>
+        <div class="drow"><span>Slug</span><b><code class="slug">${esc(it.slug)}</code> <button class="mini secondary" id="d-copyslug" title="Copy slug for the light policy">⧉ Copy</button></b></div>
         <div class="drow"><span>Bindings</span><b>${bs.length}</b></div>
         ${bs.map((b) => `<div class="drow"><span>${(b.targets && b.targets.entity_id ? [].concat(b.targets.entity_id).length : 0)} lights</span><b>${esc(b.kind === "aqara" ? "Aqara: " + (b.aqara || "") : b.kind === "effect" ? "Effect" : "Scene: " + (b.scene || ""))}</b></div>`).join("")}`;
     }
@@ -873,6 +877,20 @@ class BenniScenePresetsPanel extends HTMLElement {
     if (this._ioString) { const ta = root.querySelector("#io"); ta.focus(); ta.select(); }
   }
 
+  async _copySlug(slug) {
+    // The slug is what the light policy passes to benni_scene_presets.apply_look.
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(slug);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = slug; this.shadowRoot.appendChild(ta); ta.select();
+        document.execCommand("copy"); ta.remove();
+      }
+      this._toast(`Copied slug "${slug}".`);
+    } catch (e) { this._toast(`Copy failed — slug: ${slug}`); }
+  }
+
   _toast(m) { const t = this.shadowRoot.getElementById("toast"); if (!t) return; t.textContent = m; t.classList.add("show"); clearTimeout(this._tt); this._tt = setTimeout(() => t.classList.remove("show"), 2600); }
 
   _css() {
@@ -909,6 +927,8 @@ class BenniScenePresetsPanel extends HTMLElement {
       button.secondary { background:var(--secondary-background-color,#1e232b); color:var(--primary-text-color); border:1px solid var(--divider-color,#2a2f37); }
       button.mini { padding:5px 10px; font-size:12px; } button.primary { background:var(--primary-color,#3b82f6); }
       button.danger { color:#f87171; border-color:#f8717155; }
+      button:disabled { opacity:.4; cursor:not-allowed; }
+      .slug { font-family:monospace; background:var(--secondary-background-color,#1e232b); padding:1px 6px; border-radius:5px; }
       button.active { box-shadow:0 0 0 2px var(--primary-color,#3b82f6) inset; }
       .transport { display:flex; gap:8px; margin-top:8px; } .transport button { flex:1; }
       .tile.playing { border-color:#4ade80; }

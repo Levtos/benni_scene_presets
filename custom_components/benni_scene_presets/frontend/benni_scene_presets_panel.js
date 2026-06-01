@@ -11,6 +11,17 @@ const AQARA_DOMAIN = "aqara_advanced_lighting";
 const MAX_COLORS = 10;
 const FAV_KEY = "bsp_favorites";
 
+// Mirror of const.AQARA_STOP_SERVICES: which AAL stop service undoes each start.
+const AQARA_STOP_SERVICES = {
+  start_dynamic_scene: "stop_dynamic_scene",
+  set_dynamic_effect: "stop_effect",
+  set_segment_pattern: "stop_effect",
+  create_gradient: "stop_effect",
+  create_blocks: "stop_effect",
+  start_cct_sequence: "stop_cct_sequence",
+  start_segment_sequence: "stop_segment_sequence",
+};
+
 const slugify = (name) =>
   ((name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")) || "scene";
 const esc = (s) => (s == null ? "" : String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])));
@@ -23,6 +34,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     this._presets = [];
     this._looks = [];
     this._aqara = [];
+    this._dynamic = [];
     this._tab = "All";
     this._search = "";
     this._sort = "name";
@@ -38,7 +50,17 @@ class BenniScenePresetsPanel extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (!this._init) { this._init = true; this._renderShell(); this._refresh(); }
+    if (!this._init) { this._init = true; this._renderShell(); this._refresh(); return; }
+    // Keep the Playing badges live: re-render the browse grid when a look
+    // switch flips on/off. Skip while editing or typing in search to avoid jank.
+    if (this._view === "browse") {
+      const sig = this._looks.map((l) => (this._isRunning({ type: "look", slug: l.slug }) ? "1" : "0")).join("");
+      if (sig !== this._runSig) {
+        this._runSig = sig;
+        const active = this.shadowRoot.activeElement;
+        if (!active || active.id !== "search") this._render();
+      }
+    }
   }
   get hass() { return this._hass; }
 
@@ -57,6 +79,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     catch (e) { this._presets = []; this._toast(`Could not load scenes: ${e.message || e}`); }
     try { const d = await this._hass.callWS({ type: `${DOMAIN}/list_looks` }); this._looks = d.looks || []; } catch { this._looks = []; }
     try { const d = await this._hass.callWS({ type: `${DOMAIN}/list_aqara` }); this._aqara = d.aqara || []; } catch { this._aqara = []; }
+    try { const d = await this._hass.callWS({ type: `${DOMAIN}/get_dynamic_scenes` }); this._dynamic = d.dynamic_scenes || []; } catch { this._dynamic = []; }
     this._render();
   }
 
@@ -123,7 +146,29 @@ class BenniScenePresetsPanel extends HTMLElement {
     return `${n} light${n === 1 ? "" : "s"}`;
   }
 
-  // ---- apply ---------------------------------------------------------------
+  // ---- running state -------------------------------------------------------
+
+  // True if the given item is currently playing.
+  // - look: the switch.benni_look_<slug> entity reflects live activity.
+  // - custom scene: a dynamic scene whose preset slug matches is running.
+  // - aqara: not tracked server-side; treat as stateless (no running flag).
+  _isRunning(it) {
+    if (!it) return false;
+    if (it.type === "look") {
+      const st = this._hass.states && this._hass.states[`switch.benni_look_${it.slug}`];
+      return !!(st && st.state === "on");
+    }
+    if (it.type === "custom") {
+      return (this._dynamic || []).some((d) => d.parameters && d.parameters.preset === it.slug);
+    }
+    return false;
+  }
+  _anyRunning() {
+    return (this._dynamic || []).length > 0
+      || this._looks.some((l) => this._isRunning({ type: "look", slug: l.slug }));
+  }
+
+  // ---- apply / stop --------------------------------------------------------
 
   async _apply(it) {
     try {
@@ -151,6 +196,33 @@ class BenniScenePresetsPanel extends HTMLElement {
       }
       this._toast(`Applied "${it.name}".`);
     } catch (e) { this._toast(`Apply failed: ${e.message || e}`); }
+    this._refresh();
+  }
+
+  async _stop(it) {
+    try {
+      if (it.type === "look") {
+        await this._hass.callService(DOMAIN, "stop_look", { look: it.slug });
+      } else if (it.type === "aqara") {
+        const entity_id = this._resolveTargets();
+        if (!entity_id.length) { this._toast("Pick targets first (Edit Targets)."); return; }
+        const stopSvc = AQARA_STOP_SERVICES[it.obj.service] || "stop_effect";
+        await this._hass.callService(AQARA_DOMAIN, stopSvc, { entity_id });
+      } else {
+        // Custom scene: stop the dynamic loop on the current targets.
+        const entity_id = this._resolveTargets();
+        if (entity_id.length) await this._hass.callService(DOMAIN, "stop_dynamic_scenes_for_targets", { targets: { entity_id } });
+        else await this._hass.callService(DOMAIN, "stop_all_dynamic_scenes", {});
+      }
+      this._toast(`Stopped "${it.name}".`);
+    } catch (e) { this._toast(`Stop failed: ${e.message || e}`); }
+    this._refresh();
+  }
+
+  async _stopAll() {
+    try { await this._hass.callService(DOMAIN, "stop_all_dynamic_scenes", {}); this._toast("All scenes stopped."); }
+    catch (e) { this._toast(`Stop failed: ${e.message || e}`); }
+    this._refresh();
   }
 
   _edit(it) {
@@ -311,7 +383,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     root.innerHTML = `
       <div class="topbar">
         <div class="brand"><span class="logo">◆</span><h1>Benni Scene Presets</h1></div>
-        <div class="actions"><button id="a-new">+ New Preset</button><button class="secondary" id="a-io">⇅ Import / Export</button></div>
+        <div class="actions">${this._anyRunning() ? `<button class="secondary danger" id="a-stopall">◼ Stop all</button>` : ""}<button id="a-new">+ New Preset</button><button class="secondary" id="a-io">⇅ Import / Export</button></div>
       </div>
 
       <div class="card targets">
@@ -346,12 +418,14 @@ class BenniScenePresetsPanel extends HTMLElement {
 
     const q = (id) => root.querySelector(id);
     q("#a-new").addEventListener("click", () => this._newPreset());
+    { const sa = q("#a-stopall"); if (sa) sa.addEventListener("click", () => this._stopAll()); }
     q("#a-io").addEventListener("click", () => { this._ioString = ""; this._view = "io"; this._render(); });
     q("#a-targets").addEventListener("click", () => { this._view = "targets"; this._render(); });
     q("#search").addEventListener("input", (e) => { this._search = e.target.value; this._render(); q("#search").focus(); });
     root.querySelectorAll("[data-tab]").forEach((el) => el.addEventListener("click", () => { this._tab = el.dataset.tab; this._render(); }));
     root.querySelectorAll("[data-key]").forEach((el) => el.addEventListener("click", () => { const [type, slug] = el.dataset.key.split("::"); this._selected = { type, slug }; this._render(); }));
     root.querySelectorAll("[data-apply]").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); this._apply(this._itemByKey(el.dataset.apply)); }));
+    root.querySelectorAll("[data-stopk]").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); this._stop(this._itemByKey(el.dataset.stopk)); }));
     root.querySelectorAll("[data-editk]").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); this._edit(this._itemByKey(el.dataset.editk)); }));
     root.querySelectorAll("[data-delk]").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); this._delete(this._itemByKey(el.dataset.delk)); }));
     root.querySelectorAll("[data-favk]").forEach((el) => el.addEventListener("click", (e) => this._toggleFav(el.dataset.favk, e)));
@@ -359,6 +433,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     if (det) {
       det.querySelector("#d-close").addEventListener("click", () => { this._selected = null; this._render(); });
       const dap = det.querySelector("#d-apply"); if (dap) dap.addEventListener("click", () => this._apply(this._selectedItem()));
+      const dst = det.querySelector("#d-stop"); if (dst) dst.addEventListener("click", () => this._stop(this._selectedItem()));
       const ded = det.querySelector("#d-edit"); if (ded) ded.addEventListener("click", () => this._edit(this._selectedItem()));
       const dex = det.querySelector("#d-export"); if (dex) dex.addEventListener("click", () => this._exportScene(this._selectedItem().obj));
     }
@@ -377,16 +452,19 @@ class BenniScenePresetsPanel extends HTMLElement {
     const key = `${it.type}::${it.slug}`;
     const favKey = `${it.type}:${it.slug}`;
     const ready = this._isReady(it);
+    const running = this._isRunning(it);
+    const canStop = it.type !== "aqara"; // aqara has no running state to reflect
     return `
-      <div class="tile ${this._selected && this._selected.slug === it.slug && this._selected.type === it.type ? "sel" : ""}" data-key="${key}">
-        <div class="thumb" style="${this._gradient(it)}"><span class="star ${this._favs.has(favKey) ? "on" : ""}" data-favk="${favKey}">★</span></div>
+      <div class="tile ${running ? "playing" : ""} ${this._selected && this._selected.slug === it.slug && this._selected.type === it.type ? "sel" : ""}" data-key="${key}">
+        <div class="thumb" style="${this._gradient(it)}"><span class="star ${this._favs.has(favKey) ? "on" : ""}" data-favk="${favKey}">★</span>${running ? `<span class="playing-badge">● Playing</span>` : ""}</div>
         <div class="body">
           <div class="name">${esc(it.name) || "(unnamed)"}</div>
           <div class="meta"><span class="badge ${it.type}">${this._typeLabel(it.type)}</span><span class="status ${ready ? "ok" : "warn"}">${ready ? "● Ready" : "▲ Incomplete"}</span></div>
           <div class="row tile-actions">
             <button class="secondary mini" data-editk="${key}">✎ Edit</button>
-            <button class="mini primary" data-apply="${key}">▷ Apply</button>
-            ${it.type === "custom" ? `<button class="mini secondary" data-delk="${key}" title="Delete">✕</button>` : `<button class="mini secondary" data-delk="${key}" title="Delete">✕</button>`}
+            <button class="mini primary ${running ? "active" : ""}" data-apply="${key}" title="Play">▷</button>
+            ${canStop ? `<button class="mini secondary ${running ? "active" : ""}" data-stopk="${key}" title="Stop">◼</button>` : ""}
+            <button class="mini secondary" data-delk="${key}" title="Delete">✕</button>
           </div>
         </div>
       </div>`;
@@ -396,6 +474,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     const it = this._selectedItem();
     if (!it) return "";
     const ready = this._isReady(it);
+    const running = this._isRunning(it);
     let rows = "";
     if (it.type === "custom") {
       const cols = (it.obj.lights || []).map((l) => l.hex).filter(Boolean);
@@ -422,7 +501,11 @@ class BenniScenePresetsPanel extends HTMLElement {
         <div class="d-thumb" style="${this._gradient(it)}"></div>
         <div class="d-title">${esc(it.name)} <span class="status ${ready ? "ok" : "warn"}">${ready ? "● Ready" : "▲ Incomplete"}</span></div>
         ${rows}
-        <button class="primary block" id="d-apply">▷ Apply</button>
+        ${it.type !== "aqara" ? `<div class="drow"><span>Status</span><b class="${running ? "playing-txt" : ""}">${running ? "● Playing" : "○ Stopped"}</b></div>` : ""}
+        <div class="transport">
+          <button class="primary ${running ? "active" : ""}" id="d-apply" title="Play">▷ Play</button>
+          ${it.type !== "aqara" ? `<button class="secondary ${running ? "active" : ""}" id="d-stop" title="Stop">◼ Stop</button>` : ""}
+        </div>
         <button class="secondary block" id="d-edit">✎ Edit</button>
         ${it.type === "custom" ? `<button class="secondary block" id="d-export">⇅ Export</button>` : ""}
       </div>`;
@@ -637,6 +720,12 @@ class BenniScenePresetsPanel extends HTMLElement {
       button { padding:7px 14px; border-radius:8px; border:none; cursor:pointer; font:inherit; background:var(--primary-color,#3b82f6); color:#fff; }
       button.secondary { background:var(--secondary-background-color,#1e232b); color:var(--primary-text-color); border:1px solid var(--divider-color,#2a2f37); }
       button.mini { padding:5px 10px; font-size:12px; } button.primary { background:var(--primary-color,#3b82f6); }
+      button.danger { color:#f87171; border-color:#f8717155; }
+      button.active { box-shadow:0 0 0 2px var(--primary-color,#3b82f6) inset; }
+      .transport { display:flex; gap:8px; margin-top:8px; } .transport button { flex:1; }
+      .tile.playing { border-color:#4ade80; }
+      .playing-badge { position:absolute; bottom:8px; left:10px; font-size:11px; font-weight:600; color:#fff; background:#16a34acc; padding:2px 8px; border-radius:999px; text-shadow:0 1px 2px rgba(0,0,0,.6); }
+      .playing-txt { color:#4ade80; }
       .footer { display:flex; gap:18px; color:var(--secondary-text-color); font-size:13px; padding:6px 2px; } .footer .warn { color:#fbbf24; }
       .detail { position:fixed; top:14px; right:14px; width:340px; max-height:92vh; overflow:auto; box-shadow:0 8px 30px rgba(0,0,0,.4); }
       .d-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; } .d-head .x { background:none; border:none; color:var(--secondary-text-color); cursor:pointer; }

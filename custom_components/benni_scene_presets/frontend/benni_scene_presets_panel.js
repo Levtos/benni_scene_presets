@@ -80,7 +80,7 @@ class BenniScenePresetsPanel extends HTMLElement {
 
   _blankScene() { return { slug: null, name: "", category: "", img: null, mode: "color", colors: ["#ff8800"], kelvins: [3000], interval: 300, transition: 60, shuffle: true }; }
   _blankBinding() { return { kind: "scene", entity_ids: [], scene: "", interval: "", transition: "", aqara: "", service: "aqara_advanced_lighting.set_dynamic_effect", effect: "" }; }
-  _blankLook() { return { slug: null, name: "", img: null, bindings: [this._blankBinding()] }; }
+  _blankLook() { return { slug: null, name: "", img: null, transition: "", bindings: [this._blankBinding()] }; }
   _blankAqara() { return { slug: null, name: "", img: null, service: "start_dynamic_scene", preset: "", brightness: "" }; }
 
   _loadFavs() { try { return new Set(JSON.parse(localStorage.getItem(FAV_KEY) || "[]")); } catch { return new Set(); } }
@@ -434,6 +434,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     if (!l.name.trim()) { this._toast("Name the look."); return; }
     const bindings = l.bindings.map((b) => {
       const entity_id = this._expandList(b.entity_ids);
+      if (b.kind === "off") { if (!entity_id.length) return null; return { kind: "off", targets: { entity_id } }; }
       if (b.kind === "aqara") { if (!entity_id.length || !b.aqara) return null; return { kind: "aqara", targets: { entity_id }, aqara: b.aqara }; }
       if (b.kind === "effect") { if (!entity_id.length || !b.service || !b.effect) return null; return { kind: "effect", targets: { entity_id }, service: b.service, data: { effect: b.effect } }; }
       if (!entity_id.length || !b.scene) return null;
@@ -443,11 +444,13 @@ class BenniScenePresetsPanel extends HTMLElement {
     const msg = { type: `${DOMAIN}/save_look`, name: l.name.trim(), bindings };
     if (l.slug) msg.slug = l.slug;
     if (l.img) msg.img = l.img;
+    if (l.transition !== "" && l.transition != null) msg.transition = Number(l.transition);
     try { await this._hass.callWS(msg); this._toast("Look saved."); this._editingLook = this._blankLook(); this._view = "browse"; await this._refresh(); }
     catch (e) { this._toast(`Save failed: ${e.message || e}`); }
   }
   _editLook(look) {
     this._editingLook = { slug: look.slug, name: look.name || "", img: look.img || null,
+      transition: look.transition != null ? look.transition : "",
       bindings: (look.bindings || []).map((b) => ({ kind: b.kind || "scene", entity_ids: b.targets && b.targets.entity_id ? [].concat(b.targets.entity_id) : [], scene: b.scene || "", interval: b.interval != null ? b.interval : "", transition: b.transition != null ? b.transition : "", aqara: b.aqara || "", service: b.service || "aqara_advanced_lighting.set_dynamic_effect", effect: (b.data && b.data.effect) || "" })) };
     if (!this._editingLook.bindings.length) this._editingLook.bindings = [this._blankBinding()];
     this._view = "look"; this._render();
@@ -637,7 +640,7 @@ class BenniScenePresetsPanel extends HTMLElement {
       rows = `<div class="drow"><span>Type</span><b>Look</b></div>
         <div class="drow"><span>Slug</span><b><code class="slug">${esc(it.slug)}</code> <button class="mini secondary" id="d-copyslug" title="Copy slug for the light policy">⧉ Copy</button></b></div>
         <div class="drow"><span>Bindings</span><b>${bs.length}</b></div>
-        ${bs.map((b) => `<div class="drow"><span>${(b.targets && b.targets.entity_id ? [].concat(b.targets.entity_id).length : 0)} lights</span><b>${esc(b.kind === "aqara" ? "Aqara: " + (b.aqara || "") : b.kind === "effect" ? "Effect" : "Scene: " + (b.scene || ""))}</b></div>`).join("")}`;
+        ${bs.map((b) => `<div class="drow"><span>${(b.targets && b.targets.entity_id ? [].concat(b.targets.entity_id).length : 0)} lights</span><b>${esc(b.kind === "aqara" ? "Aqara: " + (b.aqara || "") : b.kind === "effect" ? "Effect" : b.kind === "off" ? "Off" : "Scene: " + (b.scene || ""))}</b></div>`).join("")}`;
     }
     return `
       <div class="card detail" id="detail">
@@ -760,15 +763,18 @@ class BenniScenePresetsPanel extends HTMLElement {
     root.innerHTML = `${this._backBar(l.slug ? "Edit look" : "Create look")}
       <div class="card">
         <div class="row"><label>Name</label><input type="text" id="l-name" style="flex:1;min-width:200px"></div>
+        <div class="row"><label>Transition (s)</label><input type="number" id="l-trn" min="0" max="300" placeholder="optional" style="width:120px"><span class="hint">crossfade when this look is applied; scene bindings without their own transition use it, and Off bindings fade out over it</span></div>
         ${this._imgRow(l)}
         <div id="bindings"></div>
         <button class="secondary mini" id="add-b" style="margin:6px 0">+ Add binding</button>
-        <div class="hint">Each binding = lights → a Scene, an Aqara preset, or a raw effect service.</div>
+        <div class="hint">Each binding = lights → a Scene, an Aqara preset, a raw effect service, or Off (turn the lights off).</div>
         <div class="row" style="margin-top:8px"><button id="b-savelook">${l.slug ? "Update" : "Create"} look</button></div>
       </div>`;
     root.querySelector("#back").addEventListener("click", () => { this._view = "browse"; this._render(); });
     root.querySelector("#l-name").value = l.name;
     root.querySelector("#l-name").addEventListener("input", (e) => (l.name = e.target.value));
+    root.querySelector("#l-trn").value = l.transition;
+    root.querySelector("#l-trn").addEventListener("input", (e) => (l.transition = e.target.value));
     { const fi = root.querySelector(".f-img"); if (fi) fi.addEventListener("change", (e) => { if (e.target.files && e.target.files[0]) this._uploadImage(e.target.files[0], l); }); }
     root.querySelector("#add-b").addEventListener("click", () => { l.bindings.push(this._blankBinding()); this._renderBindings(); });
     root.querySelector("#b-savelook").addEventListener("click", () => this._saveLook());
@@ -802,9 +808,10 @@ class BenniScenePresetsPanel extends HTMLElement {
         <div class="row"><label>Interval (s)</label><input type="number" class="b-int" placeholder="scene default" style="width:120px" value="${b.interval}"><label style="min-width:auto;margin-left:12px">Transition (s)</label><input type="number" class="b-trn" placeholder="scene default" style="width:120px" value="${b.transition}"></div>`;
       const aqaraRows = `<div class="row"><label>Aqara preset</label><select class="b-aqara" style="min-width:240px"><option value="">– pick –</option>${this._aqara.map((a) => `<option value="${a.slug}" ${b.aqara === a.slug ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></div>`;
       const effectRows = `<div class="row"><label>Service</label><input type="text" class="b-svc" style="flex:1;min-width:260px" value="${esc(b.service)}"></div><div class="row"><label>Effect</label><input type="text" class="b-eff" placeholder="effect name" style="min-width:200px" value="${esc(b.effect)}"></div>`;
-      const rows = kind === "aqara" ? aqaraRows : kind === "effect" ? effectRows : sceneRows;
+      const offRows = `<div class="hint" style="margin-top:4px">These lights are turned off when the look is applied (fading over the look's transition).</div>`;
+      const rows = kind === "aqara" ? aqaraRows : kind === "effect" ? effectRows : kind === "off" ? offRows : sceneRows;
       const card = document.createElement("div"); card.className = "subcard";
-      card.innerHTML = `<div class="row"><label>Type</label><select class="b-kind"><option value="scene" ${kind === "scene" ? "selected" : ""}>Scene</option><option value="aqara" ${kind === "aqara" ? "selected" : ""}>Aqara preset</option><option value="effect" ${kind === "effect" ? "selected" : ""}>Effect (raw)</option></select><button class="mini secondary b-rm" style="margin-left:auto">remove</button></div>
+      card.innerHTML = `<div class="row"><label>Type</label><select class="b-kind"><option value="scene" ${kind === "scene" ? "selected" : ""}>Scene</option><option value="aqara" ${kind === "aqara" ? "selected" : ""}>Aqara preset</option><option value="effect" ${kind === "effect" ? "selected" : ""}>Effect (raw)</option><option value="off" ${kind === "off" ? "selected" : ""}>Off (turn lights off)</option></select><button class="mini secondary b-rm" style="margin-left:auto">remove</button></div>
         <div class="row" style="align-items:flex-start"><label>${kind === "scene" ? "Lights" : "Targets"}</label>${checks}</div>${rows}`;
       card.querySelector(".b-kind").addEventListener("change", (e) => { b.kind = e.target.value; this._renderBindings(); });
       card.querySelectorAll(".b-tgt").forEach((cb) => cb.addEventListener("change", (e) => {
@@ -817,6 +824,7 @@ class BenniScenePresetsPanel extends HTMLElement {
       card.querySelector(".b-rm").addEventListener("click", () => { l.bindings.splice(idx, 1); if (!l.bindings.length) l.bindings = [this._blankBinding()]; this._renderBindings(); });
       if (kind === "aqara") card.querySelector(".b-aqara").addEventListener("change", (e) => (b.aqara = e.target.value));
       else if (kind === "effect") { card.querySelector(".b-svc").addEventListener("input", (e) => (b.service = e.target.value)); card.querySelector(".b-eff").addEventListener("input", (e) => (b.effect = e.target.value)); }
+      else if (kind === "off") { /* off binding: only the targets box, nothing else to wire */ }
       else {
         card.querySelector(".b-scene").addEventListener("change", (e) => {
           b.scene = e.target.value;

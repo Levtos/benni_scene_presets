@@ -161,10 +161,25 @@ async def async_setup(hass, config):
             raise vol.Invalid(f"Look '{look_ident}' not found.")
 
         look_slug = look.get("slug")
+        look_transition = look.get("transition")  # look-level default crossfade (s)
         dynamic_scene_manager.mark_look_active(look_slug)
         started = []
         for binding in look.get("bindings", []):
             kind = binding.get("kind", "scene")
+
+            if kind == "off":
+                # Explicitly turn these lights off (any vendor), fading over the
+                # look transition so a CCT->colour-on-another-light switch doesn't
+                # produce a hard dark flash.
+                off_targets = _resolve(binding.get("targets", {}))
+                if off_targets:
+                    data = {"entity_id": off_targets}
+                    if look_transition is not None:
+                        data["transition"] = look_transition
+                    hass.async_create_task(
+                        hass.services.async_call("light", "turn_off", data, blocking=False)
+                    )
+                continue
 
             if kind == "aqara":
                 # Named Aqara preset → call its AAL service on the targets.
@@ -218,6 +233,11 @@ async def async_setup(hass, config):
                         interval = preset.get("interval", 60)
                     if transition is None:
                         transition = preset.get("transition", 1)
+            # Binding transition wins; otherwise the look-level transition (the
+            # crossfade for this look) overrides the scene's own first-paint time.
+            initial_transition = None
+            if binding.get("transition") is None and look_transition is not None:
+                initial_transition = look_transition
 
             # Pre-wake off lights (esp. Aqara CCT ceilings) so the scene's first
             # paint isn't dropped while the device is still in standby.
@@ -229,7 +249,7 @@ async def async_setup(hass, config):
                 interval if interval is not None else 60,
                 brightness,
                 transition if transition is not None else 1,
-                None,
+                initial_transition,
                 look_slug,
             ))
 

@@ -171,6 +171,17 @@ class BenniScenePresetsPanel extends HTMLElement {
     if (!p) return "all";
     return p.kelvin != null ? "white" : "color";
   }
+  // Lights already used by OTHER bindings of the look currently being edited
+  // (groups expanded to their member lights). One light = one binding per look,
+  // so these are hidden from the other bindings' pickers.
+  _lightsTakenByOtherBindings(idx) {
+    const taken = new Set();
+    (this._editingLook.bindings || []).forEach((b, i) => {
+      if (i === idx) return;
+      for (const id of this._expandList(b.entity_ids || [])) taken.add(id);
+    });
+    return taken;
+  }
   _expandList(ids) {
     const states = this._hass.states || {};
     const out = [];
@@ -701,7 +712,12 @@ class BenniScenePresetsPanel extends HTMLElement {
       // scene only lists white-capable ceiling lights; a colour scene lists
       // colour-capable lights). Aqara/effect bindings list everything.
       const mode = kind === "scene" ? this._sceneTargetMode(b.scene) : "all";
-      const { groups, lights } = this._targetEntities(mode);
+      let { groups, lights } = this._targetEntities(mode);
+      // One light = one binding per look: hide lights/groups already claimed by
+      // another binding (a group is hidden once any of its members is taken).
+      const taken = this._lightsTakenByOtherBindings(idx);
+      lights = lights.filter((x) => !taken.has(x.id));
+      groups = groups.filter((g) => !this._groupMembers(g.id).some((m) => taken.has(m)));
       const modeHint = mode === "white" ? `<div class="hint" style="margin-bottom:6px">Kelvin scene — only white-capable lights shown.</div>`
         : mode === "color" ? `<div class="hint" style="margin-bottom:6px">Colour scene — only colour-capable lights shown.</div>` : "";
       const checks = `<div class="targets-box" style="flex:1;min-width:240px">
@@ -709,7 +725,7 @@ class BenniScenePresetsPanel extends HTMLElement {
         ${groups.length ? `<div class="tgt-head">Groups</div>` : ""}
         ${groups.map((g) => `<label class="tgt"><input type="checkbox" class="b-tgt" value="${g.id}" ${b.entity_ids.includes(g.id) ? "checked" : ""}> ${esc(g.label)} <span class="hint">(group)</span></label>`).join("")}
         ${groups.length ? `<div class="tgt-head">Lights</div>` : ""}
-        ${lights.map((x) => `<label class="tgt"><input type="checkbox" class="b-tgt" value="${x.id}" ${b.entity_ids.includes(x.id) ? "checked" : ""}> ${esc(x.label)}${x.cap ? ` <span class="cap">${x.cap}</span>` : ""}</label>`).join("") || `<div class="hint pad">No matching lights.</div>`}
+        ${lights.map((x) => `<label class="tgt"><input type="checkbox" class="b-tgt" value="${x.id}" ${b.entity_ids.includes(x.id) ? "checked" : ""}> ${esc(x.label)}${x.cap ? ` <span class="cap">${x.cap}</span>` : ""}</label>`).join("") || `<div class="hint pad">No lights left — all are used by other bindings or none match this scene.</div>`}
       </div>`;
       const sceneRows = `<div class="row"><label>Scene</label><select class="b-scene" style="min-width:220px"><option value="">– pick a scene –</option>${this._presets.map((p) => `<option value="${p.slug}" ${b.scene === p.slug ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>
         <div class="row"><label>Interval (s)</label><input type="number" class="b-int" placeholder="scene default" style="width:120px" value="${b.interval}"><label style="min-width:auto;margin-left:12px">Transition (s)</label><input type="number" class="b-trn" placeholder="scene default" style="width:120px" value="${b.transition}"></div>`;
@@ -720,7 +736,13 @@ class BenniScenePresetsPanel extends HTMLElement {
       card.innerHTML = `<div class="row"><label>Type</label><select class="b-kind"><option value="scene" ${kind === "scene" ? "selected" : ""}>Scene</option><option value="aqara" ${kind === "aqara" ? "selected" : ""}>Aqara preset</option><option value="effect" ${kind === "effect" ? "selected" : ""}>Effect (raw)</option></select><button class="mini secondary b-rm" style="margin-left:auto">remove</button></div>
         <div class="row" style="align-items:flex-start"><label>${kind === "scene" ? "Lights" : "Targets"}</label>${checks}</div>${rows}`;
       card.querySelector(".b-kind").addEventListener("change", (e) => { b.kind = e.target.value; this._renderBindings(); });
-      card.querySelectorAll(".b-tgt").forEach((cb) => cb.addEventListener("change", (e) => { const id = e.target.value; if (e.target.checked) { if (!b.entity_ids.includes(id)) b.entity_ids.push(id); } else b.entity_ids = b.entity_ids.filter((x) => x !== id); }));
+      card.querySelectorAll(".b-tgt").forEach((cb) => cb.addEventListener("change", (e) => {
+        const id = e.target.value;
+        if (e.target.checked) { if (!b.entity_ids.includes(id)) b.entity_ids.push(id); }
+        else b.entity_ids = b.entity_ids.filter((x) => x !== id);
+        // Re-render so the light just (un)claimed (dis)appears in other bindings.
+        this._renderBindings();
+      }));
       card.querySelector(".b-rm").addEventListener("click", () => { l.bindings.splice(idx, 1); if (!l.bindings.length) l.bindings = [this._blankBinding()]; this._renderBindings(); });
       if (kind === "aqara") card.querySelector(".b-aqara").addEventListener("change", (e) => (b.aqara = e.target.value));
       else if (kind === "effect") { card.querySelector(".b-svc").addEventListener("input", (e) => (b.service = e.target.value)); card.querySelector(".b-eff").addEventListener("input", (e) => (b.effect = e.target.value)); }

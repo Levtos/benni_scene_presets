@@ -250,6 +250,7 @@ class BenniScenePresetsPanel extends HTMLElement {
         if (this._tunables.customBri) data.brightness = Number(this._tunables.brightness);
         await this._hass.callService(DOMAIN, "apply_look", data);
         this._toast(`Look "${it.name}" applied.`);
+        this._refresh();  // refresh running state so the transport reflects it
         return;
       }
       const entity_id = this._resolveTargets();
@@ -519,7 +520,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     root.innerHTML = `
       <div class="topbar">
         <div class="brand"><span class="logo">◆</span><h1>Benni Scene Presets</h1></div>
-        <div class="actions">${this._anyRunning() ? `<button class="secondary danger" id="a-stopall">◼ Stop all</button><button class="secondary danger" id="a-offall" title="Stop everything and turn the lights off">⏻ Off all</button>` : ""}<button id="a-new">+ New Preset</button><button class="secondary" id="a-io">⇅ Import / Export</button></div>
+        <div class="actions"><button class="secondary danger" id="a-stopall" ${this._anyRunning() ? "" : "disabled"}>◼ Stop all</button><button class="secondary danger" id="a-offall" title="Stop everything and turn the lights off" ${this._anyRunning() ? "" : "disabled"}>⏻ Off all</button><button id="a-new">+ New Preset</button><button class="secondary" id="a-io">⇅ Import / Export</button></div>
       </div>
 
       <div class="card targets">
@@ -909,6 +910,7 @@ class BenniScenePresetsPanel extends HTMLElement {
       button.secondary { background:var(--secondary-background-color,#1e232b); color:var(--primary-text-color); border:1px solid var(--divider-color,#2a2f37); }
       button.mini { padding:5px 10px; font-size:12px; } button.primary { background:var(--primary-color,#3b82f6); }
       button.danger { color:#f87171; border-color:#f8717155; }
+      button:disabled { opacity:.4; cursor:not-allowed; }
       button.active { box-shadow:0 0 0 2px var(--primary-color,#3b82f6) inset; }
       .transport { display:flex; gap:8px; margin-top:8px; } .transport button { flex:1; }
       .tile.playing { border-color:#4ade80; }

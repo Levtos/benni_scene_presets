@@ -55,7 +55,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     this._selected = null; // {type, slug}
     this._view = "browse"; // browse | scene | aqara | look | io | targets
     this._targets = [];
-    this._tunables = { dynamic: false, shuffle: false, customBri: false, brightness: 128, customTrans: false, transition: 2 };
+    this._tunables = { shuffle: false, customBri: false, brightness: 128, customTrans: false, transition: 2 };
     this._editing = this._blankScene();
     this._editingLook = this._blankLook();
     this._editingAqara = this._blankAqara();
@@ -177,6 +177,14 @@ class BenniScenePresetsPanel extends HTMLElement {
     if (p.kelvin != null) return [p.kelvin];
     return null;
   }
+  // A scene runs as a dynamic loop when it has more than one value to cycle
+  // through (a Kelvin sweep or a multi-colour palette). A single value/colour
+  // just gets painted once.
+  _isDynamicScene(p) {
+    const kl = this._presetKelvins(p);
+    if (kl) return kl.length > 1;
+    return (p.lights || []).length > 1;
+  }
   // Lights already used by OTHER bindings of the look currently being edited
   // (groups expanded to their member lights). One light = one binding per look,
   // so these are hidden from the other bindings' pickers.
@@ -256,7 +264,9 @@ class BenniScenePresetsPanel extends HTMLElement {
         const data = { targets: { entity_id }, preset: it.slug };
         if (t.customBri) data.brightness = Number(t.brightness);
         if (t.customTrans) data.transition = Number(t.transition);
-        if (t.dynamic) { data.interval = it.obj.interval != null ? it.obj.interval : 300; await this._hass.callService(DOMAIN, "start_dynamic_scene", data); }
+        // A multi-value scene (colour palette or Kelvin sweep) runs as a dynamic
+        // loop so it actually moves; a single value just paints once.
+        if (this._isDynamicScene(it.obj)) { data.interval = it.obj.interval != null ? it.obj.interval : 300; await this._hass.callService(DOMAIN, "start_dynamic_scene", data); }
         else { data.shuffle = !!t.shuffle; await this._hass.callService(DOMAIN, "apply_preset", data); }
       }
       this._toast(`Applied "${it.name}".`);
@@ -287,6 +297,42 @@ class BenniScenePresetsPanel extends HTMLElement {
   async _stopAll() {
     try { await this._hass.callService(DOMAIN, "stop_all_dynamic_scenes", {}); this._toast("All scenes stopped."); }
     catch (e) { this._toast(`Stop failed: ${e.message || e}`); }
+    this._refresh();
+  }
+
+  // Every light SP currently drives: lights in running dynamic scenes + the
+  // targets of every binding of any running look (effect/aqara bindings too,
+  // since those carry their own targets and start no dynamic scene).
+  _controlledLights() {
+    const lights = new Set();
+    for (const d of this._dynamic || []) {
+      for (const id of (d.parameters && d.parameters.light_entity_ids) || []) lights.add(id);
+    }
+    for (const l of this._looks) {
+      if (!this._isRunning({ type: "look", slug: l.slug })) continue;
+      for (const b of l.bindings || []) {
+        const ids = b.targets && b.targets.entity_id ? [].concat(b.targets.entity_id) : [];
+        for (const id of this._expandList(ids)) lights.add(id);
+      }
+    }
+    return [...lights].filter((id) => id.startsWith("light."));
+  }
+
+  // Hard stop: stop every scene/look, then turn the controlled lights off.
+  async _offAll() {
+    const lights = this._controlledLights();
+    try {
+      await this._hass.callService(DOMAIN, "stop_all_dynamic_scenes", {});
+      // Stop each running look too (stops aqara/effect targets the manager
+      // doesn't track as dynamic scenes).
+      for (const l of this._looks) {
+        if (this._isRunning({ type: "look", slug: l.slug })) {
+          await this._hass.callService(DOMAIN, "stop_look", { look: l.slug });
+        }
+      }
+      if (lights.length) await this._hass.callService("light", "turn_off", { entity_id: lights });
+      this._toast(`Stopped & turned off ${lights.length} light${lights.length === 1 ? "" : "s"}.`);
+    } catch (e) { this._toast(`Off all failed: ${e.message || e}`); }
     this._refresh();
   }
 
@@ -473,7 +519,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     root.innerHTML = `
       <div class="topbar">
         <div class="brand"><span class="logo">◆</span><h1>Benni Scene Presets</h1></div>
-        <div class="actions">${this._anyRunning() ? `<button class="secondary danger" id="a-stopall">◼ Stop all</button>` : ""}<button id="a-new">+ New Preset</button><button class="secondary" id="a-io">⇅ Import / Export</button></div>
+        <div class="actions">${this._anyRunning() ? `<button class="secondary danger" id="a-stopall">◼ Stop all</button><button class="secondary danger" id="a-offall" title="Stop everything and turn the lights off">⏻ Off all</button>` : ""}<button id="a-new">+ New Preset</button><button class="secondary" id="a-io">⇅ Import / Export</button></div>
       </div>
 
       <div class="card targets">
@@ -483,7 +529,6 @@ class BenniScenePresetsPanel extends HTMLElement {
           <span class="chip">💡 ${this._resolveTargets().length} lights</span>
           <span class="chip">☀ Brightness: ${t.customBri ? t.brightness : "Auto"}</span>
           <span class="chip">〜 Transition: ${t.customTrans ? t.transition + "s" : "scene"}</span>
-          <span class="chip">⏲ Dynamic: ${t.dynamic ? "On" : "Off"}</span>
         </div>
         <button class="secondary edit-t" id="a-targets">⚙ Edit Targets</button>
       </div>
@@ -509,6 +554,7 @@ class BenniScenePresetsPanel extends HTMLElement {
     const q = (id) => root.querySelector(id);
     q("#a-new").addEventListener("click", () => this._newPreset());
     { const sa = q("#a-stopall"); if (sa) sa.addEventListener("click", () => this._stopAll()); }
+    { const oa = q("#a-offall"); if (oa) oa.addEventListener("click", () => this._offAll()); }
     q("#a-io").addEventListener("click", () => { this._ioString = ""; this._view = "io"; this._render(); });
     q("#a-targets").addEventListener("click", () => { this._view = "targets"; this._render(); });
     q("#search").addEventListener("input", (e) => { this._search = e.target.value; this._render(); q("#search").focus(); });
@@ -796,7 +842,6 @@ class BenniScenePresetsPanel extends HTMLElement {
         </div>
         <div class="card-title" style="margin-top:14px">Options</div>
         <div class="tun">
-          <label><input type="checkbox" id="t-dyn" ${t.dynamic ? "checked" : ""}> Dynamic (cycle)</label>
           <label><input type="checkbox" id="t-shuf" ${t.shuffle ? "checked" : ""}> Shuffle colours</label>
           <label><input type="checkbox" id="t-cbri" ${t.customBri ? "checked" : ""}> Custom brightness</label>
           <input type="range" id="t-bri" min="1" max="255" value="${t.brightness}" ${t.customBri ? "" : "disabled"}><span class="mono">${t.brightness}</span>
@@ -809,7 +854,6 @@ class BenniScenePresetsPanel extends HTMLElement {
     root.querySelector("#t-done").addEventListener("click", () => { this._view = "browse"; this._render(); });
     root.querySelectorAll(".g-tgt").forEach((cb) => cb.addEventListener("change", (e) => { const id = e.target.value; if (e.target.checked) { if (!this._targets.includes(id)) this._targets.push(id); } else this._targets = this._targets.filter((x) => x !== id); }));
     const q = (i) => root.querySelector(i);
-    q("#t-dyn").addEventListener("change", (e) => (t.dynamic = e.target.checked));
     q("#t-shuf").addEventListener("change", (e) => (t.shuffle = e.target.checked));
     q("#t-cbri").addEventListener("change", (e) => { t.customBri = e.target.checked; this._render(); });
     q("#t-bri").addEventListener("input", (e) => { t.brightness = e.target.value; e.target.nextElementSibling.textContent = e.target.value; });

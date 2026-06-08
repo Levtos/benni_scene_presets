@@ -49,6 +49,11 @@ APPLY_LOOK_SCHEMA = vol.Schema({
     vol.Required(ATTR_LOOK_ID): cv.string,
     # Brightness override (typically supplied by the light policy / day phase).
     vol.Optional(ATTR_BRIGHTNESS): vol.Coerce(int),
+    # First-paint fade override (seconds). When set, overrides the look-level
+    # crossfade for this apply — e.g. the light policy sends a short value for a
+    # brightness-only change so it shows immediately instead of over the long
+    # look crossfade. Omitted = keep the look/scene default.
+    vol.Optional(ATTR_TRANSITION): vol.Coerce(float),
 })
 
 STOP_LOOK_SCHEMA = vol.Schema({
@@ -155,6 +160,7 @@ async def async_setup(hass, config):
     async def apply_look(call):
         look_ident = call.data.get(ATTR_LOOK_ID)
         brightness = call.data.get(ATTR_BRIGHTNESS)
+        transition_override = call.data.get(ATTR_TRANSITION)
 
         look = file_utils.get_look(look_ident)
         if not look:
@@ -174,8 +180,12 @@ async def async_setup(hass, config):
                 off_targets = _resolve(binding.get("targets", {}))
                 if off_targets:
                     data = {"entity_id": off_targets}
-                    if look_transition is not None:
-                        data["transition"] = look_transition
+                    off_transition = (
+                        transition_override if transition_override is not None
+                        else look_transition
+                    )
+                    if off_transition is not None:
+                        data["transition"] = off_transition
                     hass.async_create_task(
                         hass.services.async_call("light", "turn_off", data, blocking=False)
                     )
@@ -238,6 +248,10 @@ async def async_setup(hass, config):
             initial_transition = None
             if binding.get("transition") is None and look_transition is not None:
                 initial_transition = look_transition
+            # Explicit per-call override (e.g. brightness-only re-apply) wins, so
+            # the change shows over a short fade instead of the long look crossfade.
+            if transition_override is not None:
+                initial_transition = transition_override
 
             # Pre-wake off lights (esp. Aqara CCT ceilings) so the scene's first
             # paint isn't dropped while the device is still in standby.

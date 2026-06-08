@@ -163,6 +163,19 @@ apply_look:
         number:
           min: 0
           max: 255
+    transition:
+      name: "Transition"
+      description: >-
+        First-paint fade override (seconds). Overrides the look's crossfade for
+        this apply — e.g. a short value for a brightness-only change so it shows
+        immediately. Omit to keep the look/scene default.
+      example: 2
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 0.1
+          unit_of_measurement: seconds
 
 stop_look:
   name: "Stop look"

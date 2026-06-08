@@ -158,7 +158,7 @@ async def apply_preset(
     if not preset_data:
         raise vol.Invalid(f"Preset '{preset_ident}' not found.")
 
-    brightness = brightness_override if brightness_override else preset_data.get("bri", 255)
+    brightness = brightness_override if brightness_override is not None else preset_data.get("bri", 255)
 
     kelvins = _preset_kelvins(preset_data)
     if kelvins is not None:

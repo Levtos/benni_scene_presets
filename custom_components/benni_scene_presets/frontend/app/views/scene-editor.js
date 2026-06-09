@@ -172,10 +172,10 @@ export function onClick(ctx, e) {
       ctx.renderMain(); return;
     }
   }
-  if ((el = t("[data-stop-sel]"))) { s.active = Number(el.dataset.stopSel); ctx.renderMain(); return; }
   if ((el = t("[data-stop-del]"))) { e.stopPropagation(); delStop(ctx, Number(el.dataset.stopDel)); return; }
   if ((el = t("[data-stop-up]"))) { e.stopPropagation(); move(ctx, Number(el.dataset.stopUp), -1); return; }
   if ((el = t("[data-stop-down]"))) { e.stopPropagation(); move(ctx, Number(el.dataset.stopDown), 1); return; }
+  if ((el = t("[data-stop-sel]"))) { s.active = Number(el.dataset.stopSel); ctx.renderMain(); return; }
 }
 
 export function onInput(ctx, e) {

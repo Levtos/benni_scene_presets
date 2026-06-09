@@ -3,15 +3,35 @@
 // right panel shows its composition, coverage and validation. Scenes live in
 // their own libraries and never appear here as primary cards.
 
-import { DOMAIN, esc } from "../store.js";
+import { DOMAIN, esc, kelvinToHex } from "../store.js";
 import { gradientFor } from "../styles.js";
 
 const KIND_TAG = { rgb: ["RGB", "rgb"], cct: ["CCT", "cct"], rgbcct: ["RGB+CCT", "rgbcct"], off: ["Off", "off"], aqara: ["Aqara Ring", "aqara"], raw: ["Raw", ""], switch: ["Switch", "switch"] };
 const FILTERS = [["all", "All"], ["playing", "Playing"], ["ready", "Ready"], ["warning", "Needs attention"], ["fav", "Favorites"]];
 
-function thumb(look) {
+function sceneColours(store, sceneSlug) {
+  const preset = store.findPreset(sceneSlug);
+  if (!preset) return [];
+  if (store.isKelvinScene(preset)) return store.presetKelvins(preset).map(kelvinToHex);
+  return (preset.lights || []).map((light) => light.hex).filter(Boolean);
+}
+
+function lookGradient(store, look) {
+  const colours = [];
+  for (const binding of look.bindings || []) {
+    if ((binding.kind || "scene") !== "scene") continue;
+    colours.push(...sceneColours(store, binding.scene || binding.scene_id));
+    if (colours.length >= 10) break;
+  }
+  const stops = colours.slice(0, 10);
+  if (stops.length > 1) return `linear-gradient(135deg,${stops.join(",")})`;
+  if (stops.length === 1) return `linear-gradient(135deg,${stops[0]},#00000055)`;
+  return gradientFor(look.slug || look.name);
+}
+
+function thumb(store, look) {
   if (look.img) return `<img src="/assets/${DOMAIN}/${esc(look.img)}" alt="">`;
-  return `<div style="width:100%;height:100%;background:${gradientFor(look.slug || look.name)}"></div>`;
+  return `<div style="width:100%;height:100%;background:${lookGradient(store, look)}"></div>`;
 }
 
 function lookCard(ctx, look) {
@@ -24,7 +44,7 @@ function lookCard(ctx, look) {
   return `
   <div class="card${sel}" data-look="${esc(look.slug)}">
     <div class="thumb">
-      ${thumb(look)}
+      ${thumb(store, look)}
       <span class="badge"><span class="status-pill ${info.status}">${statusLabel}</span></span>
       <span class="fav ${fav ? "on" : ""}" data-fav="${esc(look.slug)}" title="Favorite">${fav ? "★" : "☆"}</span>
     </div>

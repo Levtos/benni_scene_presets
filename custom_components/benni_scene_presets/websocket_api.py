@@ -51,16 +51,20 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             vol.Required("type"): f"{DOMAIN}/list_categories",
         }
     )
-    def ws_list_categories(hass, connection, msg) -> None:
-        connection.send_result(msg["id"], file_utils.list_categories())
+    @websocket_api.async_response
+    async def ws_list_categories(hass, connection, msg) -> None:
+        result = await hass.async_add_executor_job(file_utils.list_categories)
+        connection.send_result(msg["id"], result)
 
     @websocket_api.websocket_command(
         {
             vol.Required("type"): f"{DOMAIN}/list_targets",
         }
     )
-    def ws_list_targets(hass, connection, msg) -> None:
-        connection.send_result(msg["id"], file_utils.list_targets())
+    @websocket_api.async_response
+    async def ws_list_targets(hass, connection, msg) -> None:
+        result = await hass.async_add_executor_job(file_utils.list_targets)
+        connection.send_result(msg["id"], result)
 
     @websocket_api.websocket_command(
         {

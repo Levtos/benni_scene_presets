@@ -113,6 +113,7 @@ export function render(ctx) {
   const isK = s.mode === "kelvin";
   const stopLabel = isK ? "Kelvin Stops" : "Color Stops";
   const count = isK ? s.kelvins.length : s.colors.length;
+  const testN = (ctx.ui.testTargets || []).length;
   const categoryOptions = ctx.store.categoryOptions(s.category);
   const categorySelect = `<select data-sef="category"><option value="">Uncategorized</option>${categoryOptions.map((c) => `<option value="${esc(c)}" ${s.category === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
   return `
@@ -131,6 +132,7 @@ export function render(ctx) {
       <div class="frow"><label>Slug</label><code class="slugpv">${esc(s.slug || slugify(s.name))}</code></div>
       <div class="frow"><label>Category</label>${categorySelect}</div>
       <div class="frow"><label>Description</label><input data-sef="description" value="${esc(s.description)}" placeholder="optional"></div>
+      <div class="frow"><label>Preview Targets</label><span class="targets-pill">${testN} light${testN === 1 ? "" : "s"}</span><span class="btn sm" data-se="test-targets">Edit Targets</span></div>
       <div class="frow"><label>Interval (s)</label><input type="number" min="0" max="3600" data-sef="interval" value="${esc(s.interval)}" style="width:100px">
         <label style="margin-left:14px">Transition (s)</label><input type="number" min="0" max="300" data-sef="transition" value="${esc(s.transition)}" style="width:100px"></div>
       ${isK ? "" : `<div class="frow"><label>Shuffle</label><input type="checkbox" data-shuffle ${s.shuffle ? "checked" : ""}></div>`}
@@ -168,6 +170,7 @@ export function onClick(ctx, e) {
     if (cmd === "cancel") { ctx.ui.editing = null; ctx.navigate(s.mode === "kelvin" ? "kelvin" : "rgb"); return; }
     if (cmd === "save") { save(ctx); return; }
     if (cmd === "preview") { preview(ctx); return; }
+    if (cmd === "test-targets") { openTestTargets(ctx); return; }
     if (cmd === "add-stop") {
       if (s.mode === "kelvin") { if (s.kelvins.length < MAX_STOPS) { s.kelvins.push(3000); s.active = s.kelvins.length - 1; } }
       else if (s.colors.length < MAX_STOPS) { s.colors.push("#ffffff"); s.active = s.colors.length - 1; }
@@ -264,7 +267,8 @@ async function preview(ctx) {
   const s = ctx.ui.editing;
   const entity_id = ctx.store.expandList(ctx.ui.testTargets || []);
   if (!entity_id.length) {
-    ctx.toast("Pick test targets first (⚙ Test targets in a library).");
+    ctx.toast("Pick test targets first.");
+    openTestTargets(ctx);
     return;
   }
   try {
@@ -272,6 +276,15 @@ async function preview(ctx) {
     else await ctx.store.applyPreview({ entity_id, colors: s.colors });
     ctx.toast("Previewing.");
   } catch (err) { ctx.toast(`Preview failed: ${err.message || err}`); }
+}
+
+function openTestTargets(ctx) {
+  ctx.openDrawer({
+    title: "Test Targets", subtitle: "Lights used for Preview only — not saved with scenes.",
+    mode: "all",
+    selected: ctx.ui.testTargets || [],
+    apply: (ids) => { ctx.saveTestTargets(ids); ctx.toast(`${ids.length} test target${ids.length === 1 ? "" : "s"} set.`); ctx.renderMain(); },
+  });
 }
 
 async function save(ctx) {

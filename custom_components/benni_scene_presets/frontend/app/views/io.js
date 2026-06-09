@@ -106,12 +106,12 @@ async function importItem(ctx, it) {
   const d = it.data;
   if (it.type === "look") {
     const payload = { name: d.name, bindings: d.bindings || [] };
-    if (d.slug) payload.slug = d.slug; if (d.img) payload.img = d.img; if (d.transition != null) payload.transition = d.transition;
+    if (d.slug) payload.slug = d.slug; if (d.category) payload.category = d.category; if (d.img) payload.img = d.img; if (d.transition != null) payload.transition = d.transition;
     return ctx.store.saveLook(payload);
   }
   if (it.type === "aqara_ring_effect") {
     const payload = { name: d.name, service: d.service, data: d.data || {} };
-    if (d.slug) payload.slug = d.slug; if (d.img) payload.img = d.img;
+    if (d.slug) payload.slug = d.slug; if (d.category) payload.category = d.category; if (d.img) payload.img = d.img;
     return ctx.store.saveAqara(payload);
   }
   // rgb_scene / kelvin_scene

@@ -31,6 +31,7 @@ export class Store {
     this.presets = [];   // custom scenes (RGB + Kelvin, split in the UI by `kelvins`)
     this.looks = [];
     this.aqara = [];
+    this.categoryList = [];
     this.dynamic = [];    // running dynamic scenes
   }
 
@@ -38,8 +39,15 @@ export class Store {
 
   async refresh() {
     const h = this.hass;
-    try { const d = await h.callWS({ type: `${DOMAIN}/list_presets` }); this.presets = (d.presets || []).filter((p) => p.custom); }
-    catch { this.presets = []; }
+    try {
+      const d = await h.callWS({ type: `${DOMAIN}/list_presets` });
+      this.presets = (d.presets || []).filter((p) => p.custom);
+      this.categoryList = (d.categories || []).map((c) => typeof c === "string" ? c : c.name).filter(Boolean);
+    } catch { this.presets = []; this.categoryList = []; }
+    try {
+      const d = await h.callWS({ type: `${DOMAIN}/list_categories` });
+      this.categoryList = (d.categories || []).map((c) => typeof c === "string" ? c : c.name).filter(Boolean);
+    } catch {}
     try { const d = await h.callWS({ type: `${DOMAIN}/list_looks` }); this.looks = d.looks || []; } catch { this.looks = []; }
     try { const d = await h.callWS({ type: `${DOMAIN}/list_aqara` }); this.aqara = d.aqara || []; } catch { this.aqara = []; }
     try { const d = await h.callWS({ type: `${DOMAIN}/get_dynamic_scenes` }); this.dynamic = d.dynamic_scenes || []; } catch { this.dynamic = []; }
@@ -56,7 +64,16 @@ export class Store {
   kelvinScenes() { return this.presets.filter((p) => this.isKelvinScene(p)); }
   findPreset(slug) { return this.presets.find((p) => p.slug === slug || p.name === slug); }
   findAqara(slug) { return this.aqara.find((a) => a.slug === slug || a.name === slug); }
-  categories(list) { return [...new Set((list || this.presets).map((p) => p.category).filter(Boolean))].sort(); }
+  categories(list) {
+    const managed = this.categoryList || [];
+    const assigned = (list || [...this.presets, ...this.looks, ...this.aqara]).map((p) => p.category).filter(Boolean);
+    return [...new Set([...managed, ...assigned])].sort((a, b) => a.localeCompare(b));
+  }
+  categoryOptions(current) {
+    const categories = this.categories();
+    if (current && !categories.includes(current)) categories.push(current);
+    return categories.sort((a, b) => a.localeCompare(b));
+  }
 
   // A scene with more than one value runs as a dynamic loop; a single value paints once.
   isDynamicScene(p) {
@@ -245,6 +262,7 @@ export class Store {
   deleteLook(slug) { return this.hass.callWS({ type: `${DOMAIN}/delete_look`, slug }); }
   saveAqara(payload) { return this.hass.callWS({ type: `${DOMAIN}/save_aqara`, ...payload }); }
   deleteAqara(slug) { return this.hass.callWS({ type: `${DOMAIN}/delete_aqara`, slug }); }
+  saveCategories(categories) { return this.hass.callWS({ type: `${DOMAIN}/save_categories`, categories }); }
 
   // Aqara preset options read live from the AAL service schema (if installed).
   aqaraPresetOptions(service) {

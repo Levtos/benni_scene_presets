@@ -113,6 +113,8 @@ export function render(ctx) {
   const isK = s.mode === "kelvin";
   const stopLabel = isK ? "Kelvin Stops" : "Color Stops";
   const count = isK ? s.kelvins.length : s.colors.length;
+  const categoryOptions = ctx.store.categoryOptions(s.category);
+  const categorySelect = `<select data-sef="category"><option value="">Uncategorized</option>${categoryOptions.map((c) => `<option value="${esc(c)}" ${s.category === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
   return `
   <div class="page-head">
     <div><h1>${s.slug ? "Edit" : "Create"} ${isK ? "Kelvin" : "RGB"} Scene</h1><div class="sub">Define colours, order and timing for this scene.</div></div>
@@ -127,7 +129,7 @@ export function render(ctx) {
       <div class="frow"><label>Image</label><input type="file" accept="image/*" data-img>${s.img ? `<img class="imgprev" src="/assets/${DOMAIN}/${esc(s.img)}">` : ""}</div>
       <div class="frow"><label>Name</label><input data-sef="name" value="${esc(s.name)}" placeholder="Scene name"></div>
       <div class="frow"><label>Slug</label><code class="slugpv">${esc(s.slug || slugify(s.name))}</code></div>
-      <div class="frow"><label>Category</label><input data-sef="category" value="${esc(s.category)}" placeholder="e.g. Gaming"></div>
+      <div class="frow"><label>Category</label>${categorySelect}</div>
       <div class="frow"><label>Description</label><input data-sef="description" value="${esc(s.description)}" placeholder="optional"></div>
       <div class="frow"><label>Interval (s)</label><input type="number" min="0" max="3600" data-sef="interval" value="${esc(s.interval)}" style="width:100px">
         <label style="margin-left:14px">Transition (s)</label><input type="number" min="0" max="300" data-sef="transition" value="${esc(s.transition)}" style="width:100px"></div>
@@ -215,6 +217,7 @@ export function onInput(ctx, e) {
 export function onChange(ctx, e) {
   const s = ctx.ui.editing; if (!s) return;
   let el;
+  if ((el = e.target.closest("[data-sef]"))) { s[el.dataset.sef] = el.value; return; }
   if ((el = e.target.closest("[data-shuffle]"))) { s.shuffle = el.checked; return; }
   if ((el = e.target.closest("[data-native]"))) { s.colors[s.active] = el.value; applyHex(e.target.getRootNode(), s, el.value, true); return; }
   if ((el = e.target.closest("[data-img]"))) { if (el.files && el.files[0]) upload(ctx, el.files[0]); return; }

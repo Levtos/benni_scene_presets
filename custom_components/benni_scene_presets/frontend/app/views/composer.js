@@ -10,12 +10,12 @@ const KIND_OPTS = [
   ["scene", "Scene"], ["aqara", "Aqara Ring Effect"], ["off", "Off"], ["effect", "Raw Effect"],
 ];
 const blankBinding = () => ({ kind: "scene", entity_ids: [], scene: "", interval: "", transition: "", aqara: "", service: "aqara_advanced_lighting.set_dynamic_effect", effect: "" });
-const blankLook = () => ({ slug: null, name: "", img: null, transition: "", description: "", bindings: [blankBinding()] });
+const blankLook = () => ({ slug: null, name: "", category: "", img: null, transition: "", description: "", bindings: [blankBinding()] });
 
 export function startNew(ctx) { ctx.ui.editingLook = blankLook(); }
 export function editFrom(ctx, look) {
   ctx.ui.editingLook = {
-    slug: look.slug, name: look.name || "", img: look.img || null,
+    slug: look.slug, name: look.name || "", category: look.category || "", img: look.img || null,
     transition: look.transition != null ? look.transition : "", description: look.description || "",
     bindings: (look.bindings || []).map((b) => ({
       kind: b.kind || "scene",
@@ -93,6 +93,7 @@ export function render(ctx) {
   const l = ctx.ui.editingLook;
   if (!l) { startNew(ctx); return render(ctx); }
   const bindings = l.bindings.map((b, i) => bindingRow(ctx, b, i)).join("");
+  const categoryOptions = ctx.store.categoryOptions(l.category);
   return `
   <div class="page-head">
     <div><h1>Look Composer</h1><div class="sub">Build and edit deployable looks.</div></div>
@@ -106,6 +107,7 @@ export function render(ctx) {
         <div class="frow"><label>Image</label><input type="file" accept="image/*" data-img>${l.img ? `<img class="imgprev" src="/assets/${DOMAIN}/${esc(l.img)}">` : ""}</div>
         <div class="frow"><label>Look Name</label><input data-lf="name" value="${esc(l.name)}" placeholder="Look name"></div>
         <div class="frow"><label>Slug</label><code class="slugpv">${esc(l.slug || slugify(l.name))}</code></div>
+        <div class="frow"><label>Category</label><select data-lf="category"><option value="">Uncategorized</option>${categoryOptions.map((c) => `<option value="${esc(c)}" ${l.category === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
         <div class="frow"><label>Transition (s)</label><input type="number" min="0" max="300" data-lf="transition" value="${esc(l.transition)}" placeholder="optional" style="width:110px"></div>
         <div class="frow"><label>Description</label><input data-lf="description" value="${esc(l.description)}" placeholder="optional"></div>
       </div>
@@ -146,6 +148,7 @@ export function onInput(ctx, e) {
 export function onChange(ctx, e) {
   const l = ctx.ui.editingLook; if (!l) return;
   let el;
+  if ((el = e.target.closest("[data-lf]"))) { l[el.dataset.lf] = el.value; return; }
   if ((el = e.target.closest("[data-bk]"))) { l.bindings[Number(el.dataset.bk)].kind = el.value; ctx.renderMain(); return; }
   if ((el = e.target.closest("[data-bscene]"))) {
     const b = l.bindings[Number(el.dataset.bscene)]; b.scene = el.value;
@@ -196,6 +199,7 @@ async function save(ctx) {
   if (!bindings.length) { ctx.toast("Add at least one complete binding."); return; }
   const payload = { name: l.name.trim(), bindings };
   if (l.slug) payload.slug = l.slug;
+  if (l.category) payload.category = l.category;
   if (l.img) payload.img = l.img;
   if (l.transition !== "" && l.transition != null) payload.transition = Number(l.transition);
   try { await ctx.store.saveLook(payload); ctx.toast("Look saved."); ctx.ui.editingLook = null; await ctx.refresh(); ctx.navigate("overview"); }

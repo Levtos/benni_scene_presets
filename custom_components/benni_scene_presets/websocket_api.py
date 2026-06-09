@@ -48,6 +48,29 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
 
     @websocket_api.websocket_command(
         {
+            vol.Required("type"): f"{DOMAIN}/list_categories",
+        }
+    )
+    def ws_list_categories(hass, connection, msg) -> None:
+        connection.send_result(msg["id"], file_utils.list_categories())
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/save_categories",
+            vol.Required("categories"): [str],
+        }
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_save_categories(hass, connection, msg) -> None:
+        saved = await hass.async_add_executor_job(
+            file_utils.save_categories, msg["categories"]
+        )
+        async_dispatcher_send(hass, SIGNAL_LOOKS_CHANGED)
+        connection.send_result(msg["id"], saved)
+
+    @websocket_api.websocket_command(
+        {
             vol.Required("type"): f"{DOMAIN}/list_looks",
         }
     )
@@ -131,6 +154,7 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             vol.Optional("slug"): str,
             vol.Required("name"): str,
             vol.Optional("img"): vol.Any(str, None),
+            vol.Optional("category"): vol.Any(str, None),
             # Look-level default crossfade (seconds): scene bindings without their
             # own transition use it, and `off` bindings fade out over it.
             vol.Optional("transition"): vol.Any(int, None),
@@ -179,6 +203,8 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             look["slug"] = msg["slug"]
         if msg.get("img"):
             look["img"] = msg["img"]
+        if msg.get("category"):
+            look["category"] = msg["category"]
         if msg.get("transition") is not None:
             look["transition"] = msg["transition"]
 
@@ -215,6 +241,7 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             vol.Required("service"): str,
             vol.Optional("data"): vol.Any(dict, None),
             vol.Optional("img"): vol.Any(str, None),
+            vol.Optional("category"): vol.Any(str, None),
         }
     )
     @websocket_api.require_admin
@@ -225,6 +252,8 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             preset["slug"] = msg["slug"]
         if msg.get("img"):
             preset["img"] = msg["img"]
+        if msg.get("category"):
+            preset["category"] = msg["category"]
         saved = await hass.async_add_executor_job(file_utils.save_aqara, preset)
         connection.send_result(msg["id"], saved)
 
@@ -299,6 +328,8 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
 
     websocket_api.async_register_command(hass, ws_get_dynamic_scenes)
     websocket_api.async_register_command(hass, ws_list_presets)
+    websocket_api.async_register_command(hass, ws_list_categories)
+    websocket_api.async_register_command(hass, ws_save_categories)
     websocket_api.async_register_command(hass, ws_list_looks)
     websocket_api.async_register_command(hass, ws_save_preset)
     websocket_api.async_register_command(hass, ws_delete_preset)

@@ -102,6 +102,7 @@ function passesFilter(ctx, m, p) {
   const { store, ui, favs } = ctx;
   const q = (ui.search || "").trim().toLowerCase();
   if (q && !(`${p.name} ${p.slug} ${p.category || ""}`.toLowerCase().includes(q))) return false;
+  if (ui.category && ui.category !== "all" && p.category !== ui.category) return false;
   switch (ui.filter) {
     case "dynamic": return store.isDynamicScene(p);
     case "sweep": return store.presetKelvins(p) && store.presetKelvins(p).length > 1;
@@ -116,6 +117,10 @@ export function render(ctx) {
   const { store, ui } = ctx;
   const list = m.list(store).filter((p) => passesFilter(ctx, m, p));
   const tabs = m.filters.map(([k, l]) => `<span class="chip ${ui.filter === k ? "active" : ""}" data-filter="${k}">${l}</span>`).join("");
+  const cats = store.categories(m.list(store));
+  const catTabs = cats.length
+    ? `<div class="tabs cats"><span class="chip ${!ui.category || ui.category === "all" ? "active" : ""}" data-category="all">All Categories</span>${cats.map((c) => `<span class="chip ${ui.category === c ? "active" : ""}" data-category="${esc(c)}">${esc(c)}</span>`).join("")}</div>`
+    : "";
   const testN = (ui.testTargets || []).length;
 
   const grid = list.length || (m.list(store).length)
@@ -134,6 +139,7 @@ export function render(ctx) {
     <div class="btn primary" data-new="scene">＋ ${m.newLabel}</div>
   </div>
   <div class="tabs">${tabs}</div>
+  ${catTabs}
   <div class="split"><div>${grid}</div>${detail(ctx, m)}</div>`;
 }
 
@@ -143,6 +149,7 @@ export function onClick(ctx, e) {
   const t = (sel) => e.target.closest(sel);
   let el;
   if ((el = t("[data-filter]"))) { ui.filter = el.dataset.filter; ctx.renderMain(); return; }
+  if ((el = t("[data-category]"))) { ui.category = el.dataset.category; ctx.renderMain(); return; }
   if ((el = t("[data-preview]"))) { e.stopPropagation(); preview(ctx, el.dataset.preview); return; }
   if ((el = t("[data-edit]"))) { e.stopPropagation(); const p = store.findPreset(el.dataset.edit); if (p) { ctx.views.editor.editFrom(ctx, p); ctx.navigate("editor"); } return; }
   if ((el = t("[data-del]"))) { e.stopPropagation(); del(ctx, el.dataset.del); return; }

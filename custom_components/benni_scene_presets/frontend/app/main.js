@@ -30,7 +30,7 @@ class BspNewApp extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._init = false;
     this.ui = {
-      section: "overview", search: "", filter: "all", selected: null,
+      section: "overview", search: "", filter: "all", category: "all", selected: null,
       editing: null,      // scene editor working copy
       editingLook: null,  // look composer working copy
       drawer: null,       // target picker drawer state
@@ -191,7 +191,7 @@ class BspNewApp extends HTMLElement {
     if (this.ui.drawer && this._drawer.onDrawerClick(this._ctx(), e)) return;
     if ((el = t("[data-nav]"))) {
       const sec = el.dataset.nav;
-      this.ui.section = sec; this.ui.search = ""; this.ui.selected = null; this.ui.drawer = null;
+      this.ui.section = sec; this.ui.search = ""; this.ui.filter = "all"; this.ui.category = "all"; this.ui.selected = null; this.ui.drawer = null;
       if (sec === "composer") this._views.composer.startNew(this._ctx());
       if (sec === "io") this._views.io.init(this._ctx());
       this._render();

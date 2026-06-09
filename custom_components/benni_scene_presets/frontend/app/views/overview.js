@@ -33,6 +33,7 @@ function lookCard(ctx, look) {
       <div class="meta">
         <span>${info.bindingCount} binding${info.bindingCount === 1 ? "" : "s"}</span>
         <span>${info.lightCount} light${info.lightCount === 1 ? "" : "s"}</span>
+        ${look.category ? `<span>${esc(look.category)}</span>` : ""}
       </div>
       <div class="acts">
         ${playing
@@ -69,6 +70,7 @@ function detailPanel(ctx) {
   <div class="detail">
     <h3>${esc(look.name)}</h3>
     <div class="slug"><code>${esc(look.slug)}</code><span class="iconbtn" data-copy="${esc(look.slug)}" title="Copy slug" style="width:24px;height:24px;font-size:11px">⧉</span></div>
+    ${look.category ? `<div class="section"><div class="h">Category</div><span class="tag">${esc(look.category)}</span></div>` : ""}
     <div class="section"><div class="h">Composition</div>${bindings}</div>
     <div class="section">
       <div class="h">Coverage &amp; Validation</div>
@@ -90,7 +92,8 @@ function detailPanel(ctx) {
 function matches(ctx, look) {
   const { store, ui, favs } = ctx;
   const q = (ui.search || "").trim().toLowerCase();
-  if (q && !(`${look.name} ${look.slug}`.toLowerCase().includes(q))) return false;
+  if (q && !(`${look.name} ${look.slug} ${look.category || ""}`.toLowerCase().includes(q))) return false;
+  if (ui.category && ui.category !== "all" && look.category !== ui.category) return false;
   const info = store.lookInfo(look);
   switch (ui.filter) {
     case "playing": return info.status === "playing";
@@ -106,6 +109,10 @@ export function render(ctx) {
   const looks = store.looks.filter((l) => matches(ctx, l));
   const running = store.looks.filter((l) => store.isLookRunning(l.slug));
   const tabs = FILTERS.map(([k, l]) => `<span class="chip ${ui.filter === k ? "active" : ""}" data-filter="${k}">${l}</span>`).join("");
+  const cats = store.categories(store.looks);
+  const catTabs = cats.length
+    ? `<div class="tabs cats"><span class="chip ${!ui.category || ui.category === "all" ? "active" : ""}" data-category="all">All Categories</span>${cats.map((c) => `<span class="chip ${ui.category === c ? "active" : ""}" data-category="${esc(c)}">${esc(c)}</span>`).join("")}</div>`
+    : "";
 
   const cards = looks.length
     ? `<div class="grid">${looks.map((l) => lookCard(ctx, l)).join("")}
@@ -126,6 +133,7 @@ export function render(ctx) {
     <div class="btn primary" data-new="look">＋ New Look</div>
   </div>
   <div class="tabs">${tabs}</div>
+  ${catTabs}
   <div class="split"><div>${cards}</div>${detailPanel(ctx)}</div>
   <div class="panels">
     <div class="panel"><div class="h">Now Playing</div>${nowPlaying}</div>
@@ -142,6 +150,7 @@ export function onClick(ctx, e) {
   const t = (sel) => e.target.closest(sel);
   let el;
   if ((el = t("[data-filter]"))) { ui.filter = el.dataset.filter; ctx.renderMain(); return; }
+  if ((el = t("[data-category]"))) { ui.category = el.dataset.category; ctx.renderMain(); return; }
   if ((el = t("[data-play]"))) { e.stopPropagation(); play(ctx, el.dataset.play); return; }
   if ((el = t("[data-stop]"))) { e.stopPropagation(); stop(ctx, el.dataset.stop); return; }
   if ((el = t("[data-edit]"))) { e.stopPropagation(); const lk = store.looks.find((l) => l.slug === el.dataset.edit); if (lk) { ctx.views.composer.editFrom(ctx, lk); ctx.navigate("composer"); } return; }

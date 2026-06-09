@@ -69,6 +69,29 @@ def _write_custom(data):
             os.remove(tmp_path)
 
 
+def _category_name(item):
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        return str(item.get("name") or item.get("slug") or "").strip()
+    return ""
+
+
+def _normalize_categories(categories):
+    seen = set()
+    out = []
+    for item in categories or []:
+        name = _category_name(item)
+        if not name:
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": name, "slug": slugify(name)})
+    return out
+
+
 def reload_preset_data():
     """Rebuild the merged PRESET_DATA in place from bundled + custom presets.
 
@@ -87,14 +110,43 @@ def reload_preset_data():
         + [{**d, 'custom': True} for d in custom.get("presets", [])]
     )
     PRESET_DATA["categories"] = (
-        list(BUNDLED_DATA.get("categories", []))
-        + [{**d, 'custom': True} for d in custom.get("categories", [])]
+        _normalize_categories(BUNDLED_DATA.get("categories", []))
+        + [{**d, 'custom': True} for d in _normalize_categories(custom.get("categories", []))]
     )
     return PRESET_DATA
 
 
 def list_custom_presets():
     return _read_custom()
+
+
+def list_categories():
+    custom = _read_custom()
+    return {
+        "categories": _normalize_categories(
+            list(BUNDLED_DATA.get("categories", []))
+            + list(custom.get("categories", []))
+        )
+    }
+
+
+def save_categories(categories):
+    data = _read_custom()
+    normalized = _normalize_categories(categories)
+    allowed = {item["name"].casefold() for item in normalized}
+    data["categories"] = normalized
+
+    for preset in data.get("presets", []):
+        if preset.get("category") and str(preset["category"]).casefold() not in allowed:
+            preset.pop("category", None)
+
+    _write_custom(data)
+    reload_preset_data()
+
+    _clear_missing_categories(LOOKS_PATH, "looks", allowed, reload_looks)
+    _clear_missing_categories(AQARA_PATH, "aqara", allowed, reload_aqara)
+
+    return {"categories": normalized}
 
 
 def find_preset(ident):
@@ -161,6 +213,30 @@ def delete_custom_preset(slug):
             _LOGGER.warning("Could not remove image %s: %s", img_path, e)
 
     return removed is not None
+
+
+def _clear_missing_categories(path, key, allowed, reload_func):
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, 'r', encoding='utf-8') as file:
+            data = json.load(file)
+    except (json.JSONDecodeError, OSError) as e:
+        _LOGGER.error("Error loading %s while cleaning categories: %s", path, e)
+        return
+
+    changed = False
+    for item in data.get(key, []):
+        if item.get("category") and str(item["category"]).casefold() not in allowed:
+            item.pop("category", None)
+            changed = True
+
+    if changed:
+        if key == "looks":
+            _write_looks(data)
+        elif key == "aqara":
+            _write_aqara(data)
+        reload_func()
 
 
 # --- Looks (named compositions of scene/effect bindings) --------------------

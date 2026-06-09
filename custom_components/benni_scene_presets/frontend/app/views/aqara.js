@@ -10,7 +10,7 @@ const SERVICES = [
   { v: "set_dynamic_effect", l: "Dynamic Effect" },
 ];
 
-const blank = () => ({ slug: null, name: "", img: null, service: "start_dynamic_scene", preset: "", brightness: "" });
+const blank = () => ({ slug: null, name: "", category: "", img: null, service: "start_dynamic_scene", preset: "", brightness: "" });
 
 function card(ctx, a) {
   const { favs, ui } = ctx;
@@ -25,6 +25,7 @@ function card(ctx, a) {
     </div>
     <div class="body">
       <div class="name">${esc(a.name)}</div>
+      ${a.category ? `<div class="meta"><span>${esc(a.category)}</span></div>` : ""}
       <div class="meta"><span>${esc(a.service || "")}</span></div>
       <div class="meta"><span>${esc(preset || "—")}</span></div>
       <div class="acts">
@@ -47,6 +48,7 @@ function detail(ctx) {
   <div class="detail">
     <h3>${esc(a.name)}</h3>
     <div class="slug">Aqara Ring Effect Reference</div>
+    ${a.category ? `<div class="section"><div class="h">Category</div><span class="tag">${esc(a.category)}</span></div>` : ""}
     <div class="section"><div class="h">Service / Action</div>
       <div class="bind-row"><code>${esc(a.service)}</code><span class="iconbtn" data-copy="${esc(a.service)}" style="width:24px;height:24px;font-size:11px;margin-left:auto">⧉</span></div>
     </div>
@@ -70,7 +72,8 @@ export function render(ctx) {
   const q = (ui.search || "").trim().toLowerCase();
   const list = store.aqara.filter((a) => {
     if (ui.filter === "fav" && !ctx.favs.has(a.slug)) return false;
-    return !q || `${a.name} ${a.slug} ${a.service}`.toLowerCase().includes(q);
+    if (ui.category && ui.category !== "all" && a.category !== ui.category) return false;
+    return !q || `${a.name} ${a.slug} ${a.service} ${a.category || ""}`.toLowerCase().includes(q);
   });
   const testN = (ui.testTargets || []).length;
   const editing = ui.editingAqara;
@@ -78,6 +81,10 @@ export function render(ctx) {
   if (editing) return editor(ctx, editing);
 
   const tabs = [["all", "All"], ["fav", "Favorites"]].map(([k, l]) => `<span class="chip ${ui.filter === k ? "active" : ""}" data-filter="${k}">${l}</span>`).join("");
+  const cats = store.categories(store.aqara);
+  const catTabs = cats.length
+    ? `<div class="tabs cats"><span class="chip ${!ui.category || ui.category === "all" ? "active" : ""}" data-category="all">All Categories</span>${cats.map((c) => `<span class="chip ${ui.category === c ? "active" : ""}" data-category="${esc(c)}">${esc(c)}</span>`).join("")}</div>`
+    : "";
   const grid = store.aqara.length
     ? `<div class="grid">${list.map((a) => card(ctx, a)).join("")}
         <div class="card" data-new="aqara" style="border-style:dashed;align-items:center;justify-content:center;min-height:180px">
@@ -94,6 +101,7 @@ export function render(ctx) {
     <div class="btn primary" data-new="aqara">＋ New Ring Effect</div>
   </div>
   <div class="tabs">${tabs}</div>
+  ${catTabs}
   <div class="split"><div>${grid}</div>${detail(ctx)}</div>`;
 }
 
@@ -102,6 +110,7 @@ function editor(ctx, a) {
   const opts = store.aqaraPresetOptions(a.service);
   const inList = opts.some((o) => o.value === a.preset);
   const noAal = opts.length === 0;
+  const categoryOptions = store.categoryOptions(a.category);
   return `
   <div class="page-head">
     <div><h1>${a.slug ? "Edit" : "New"} Ring Effect</h1><div class="sub">A reference to an Aqara Advanced Lighting action.</div></div>
@@ -111,6 +120,7 @@ function editor(ctx, a) {
   </div>
   <div class="form-card">
     <div class="frow"><label>Name</label><input data-aqf="name" value="${esc(a.name)}" placeholder="Display name"></div>
+    <div class="frow"><label>Category</label><select data-aqf="category"><option value="">Uncategorized</option>${categoryOptions.map((c) => `<option value="${esc(c)}" ${a.category === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
     <div class="frow"><label>Type</label><select data-aqf="service">${SERVICES.map((s) => `<option value="${s.v}" ${a.service === s.v ? "selected" : ""}>${s.l}</option>`).join("")}</select></div>
     <div class="frow"><label>Aqara preset</label>${noAal
       ? `<input data-aqf="preset" value="${esc(a.preset)}" placeholder="preset name (AAL not detected)">`
@@ -131,8 +141,9 @@ export function onClick(ctx, e) {
     return;
   }
   if ((el = t("[data-filter]"))) { ui.filter = el.dataset.filter; ctx.renderMain(); return; }
+  if ((el = t("[data-category]"))) { ui.category = el.dataset.category; ctx.renderMain(); return; }
   if ((el = t("[data-preview]"))) { e.stopPropagation(); preview(ctx, el.dataset.preview); return; }
-  if ((el = t("[data-edit]"))) { e.stopPropagation(); const a = store.findAqara(el.dataset.edit); if (a) { ui.editingAqara = { slug: a.slug, name: a.name || "", img: a.img || null, service: a.service || "start_dynamic_scene", preset: (a.data && a.data.preset) || "", brightness: (a.data && a.data.brightness) != null ? a.data.brightness : "" }; ctx.render(); } return; }
+  if ((el = t("[data-edit]"))) { e.stopPropagation(); const a = store.findAqara(el.dataset.edit); if (a) { ui.editingAqara = { slug: a.slug, name: a.name || "", category: a.category || "", img: a.img || null, service: a.service || "start_dynamic_scene", preset: (a.data && a.data.preset) || "", brightness: (a.data && a.data.brightness) != null ? a.data.brightness : "" }; ctx.render(); } return; }
   if ((el = t("[data-del]"))) { e.stopPropagation(); del(ctx, el.dataset.del); return; }
   if ((el = t("[data-new]"))) { e.stopPropagation(); ui.editingAqara = blank(); ctx.render(); return; }
   if ((el = t('[data-act="test-targets"]'))) { openTestTargets(ctx); return; }
@@ -181,6 +192,7 @@ async function save(ctx) {
   if (a.brightness !== "" && a.brightness != null) data.brightness = Number(a.brightness);
   const payload = { name: a.name.trim(), service: a.service, data };
   if (a.slug) payload.slug = a.slug;
+  if (a.category) payload.category = a.category;
   if (a.img) payload.img = a.img;
   try { await ctx.store.saveAqara(payload); ctx.toast("Saved."); ctx.ui.editingAqara = null; await ctx.refresh(); }
   catch (err) { ctx.toast(`Save failed: ${err.message || err}`); }

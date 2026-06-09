@@ -1,7 +1,7 @@
 import os
 import uuid
 from .const import NAME, DOMAIN, PANEL_URL
-from .file_utils import VERSION, PRESET_DATA, BASE_PATH, CUSTOM_ASSETS_DIR
+from .file_utils import VERSION, PRESET_DATA, LOOKS, AQARA, BASE_PATH, CUSTOM_ASSETS_DIR
 from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.components.frontend import async_remove_panel, async_register_built_in_panel
 
@@ -139,6 +139,20 @@ async def async_register_custom_image(hass, img_filename):
 
 async def get_preset_image_paths(hass):
     static_paths = []
+    seen_urls = set()
+
+    def _add_image_path(img_filename, path):
+        url = f'/assets/{DOMAIN}/{img_filename}'
+        if url in seen_urls:
+            return
+        seen_urls.add(url)
+        static_paths.append(
+            StaticPathConfig(
+                url,
+                hass.config.path(path),
+                True
+            )
+        )
 
     for preset in PRESET_DATA.get("presets", []):
         img_filename = preset.get("img")
@@ -149,12 +163,17 @@ async def get_preset_image_paths(hass):
             if is_custom is not None and is_custom:
                 path = f"{BASE_PATH}/userdata/custom/assets/{img_filename}"
 
-            static_paths.append(
-                StaticPathConfig(
-                    f'/assets/{DOMAIN}/{img_filename}',
-                    hass.config.path(path),
-                    True
-                )
+            _add_image_path(img_filename, path)
+
+    for library in (LOOKS.get("looks", []), AQARA.get("aqara", [])):
+        for item in library:
+            img_filename = item.get("img")
+            if img_filename is None:
+                continue
+
+            _add_image_path(
+                img_filename,
+                f'{BASE_PATH}/userdata/custom/assets/{img_filename}',
             )
 
     return static_paths

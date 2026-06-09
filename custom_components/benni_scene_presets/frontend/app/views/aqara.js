@@ -3,7 +3,7 @@
 // render RGBIC effects itself; it stores references that Looks can bind to.
 // No persistent targets here — only an optional Preview on test targets.
 
-import { AQARA_DOMAIN, esc } from "../store.js";
+import { AQARA_DOMAIN, DOMAIN, esc } from "../store.js";
 
 const SERVICES = [
   { v: "start_dynamic_scene", l: "Dynamic Scene" },
@@ -19,7 +19,7 @@ function card(ctx, a) {
   return `
   <div class="card${sel}" data-aqara="${esc(a.slug)}">
     <div class="thumb" style="background:linear-gradient(135deg,#3a2a55,#1f2b3a);display:grid;place-items:center">
-      ${a.img ? `<img src="/assets/${ "benni_scene_presets" }/${esc(a.img)}">` : `<div style="font-size:30px;color:var(--purple)">◎</div>`}
+      ${a.img ? `<img src="/assets/${DOMAIN}/${esc(a.img)}">` : `<div style="font-size:30px;color:var(--purple)">◎</div>`}
       <span class="badge">AAL reference</span>
       <span class="fav ${favs.has(a.slug) ? "on" : ""}" data-fav="${esc(a.slug)}">${favs.has(a.slug) ? "★" : "☆"}</span>
     </div>
@@ -119,6 +119,7 @@ function editor(ctx, a) {
     <div class="btn primary" data-aq="save">Save</div>
   </div>
   <div class="form-card">
+    <div class="frow"><label>Image</label><input type="file" accept="image/*" data-img>${a.img ? `<img class="imgprev" src="/assets/${DOMAIN}/${esc(a.img)}">` : ""}</div>
     <div class="frow"><label>Name</label><input data-aqf="name" value="${esc(a.name)}" placeholder="Display name"></div>
     <div class="frow"><label>Category</label><select data-aqf="category"><option value="">Uncategorized</option>${categoryOptions.map((c) => `<option value="${esc(c)}" ${a.category === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
     <div class="frow"><label>Type</label><select data-aqf="service">${SERVICES.map((s) => `<option value="${s.v}" ${a.service === s.v ? "selected" : ""}>${s.l}</option>`).join("")}</select></div>
@@ -157,9 +158,16 @@ export function onInput(ctx, e) {
 }
 export function onChange(ctx, e) {
   const a = ctx.ui.editingAqara; if (!a) return;
+  let img;
+  if ((img = e.target.closest("[data-img]"))) { if (img.files && img.files[0]) upload(ctx, img.files[0]); return; }
   const el = e.target.closest("[data-aqf]"); if (!el) return;
   a[el.dataset.aqf] = el.value;
   if (el.dataset.aqf === "service") ctx.render(); // refresh preset options
+}
+
+async function upload(ctx, file) {
+  try { ctx.ui.editingAqara.img = await ctx.store.uploadImage(file); ctx.toast("Image uploaded."); ctx.renderMain(); }
+  catch (err) { ctx.toast(`Upload failed: ${err.message || err}`); }
 }
 
 function openTestTargets(ctx) {

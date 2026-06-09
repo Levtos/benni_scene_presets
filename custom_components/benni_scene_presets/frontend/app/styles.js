@@ -116,6 +116,11 @@ export const STYLES = `
 .card.selected { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan) inset; }
 .card .thumb { height: 96px; position: relative; background: var(--surface-2); }
 .card .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.look-generic-thumb { width: 100%; height: 100%; display: grid; place-items: center; background:
+  radial-gradient(circle at 50% 45%, rgba(139,233,253,.15), transparent 34%),
+  repeating-linear-gradient(135deg, rgba(255,255,255,.055) 0 1px, transparent 1px 12px),
+  linear-gradient(135deg, #232632, #343746); }
+.look-generic-thumb span { width: 44px; height: 44px; border-radius: 999px; display: grid; place-items: center; border: 1px solid rgba(139,233,253,.42); color: var(--cyan); background: rgba(33,34,44,.72); font-size: 24px; box-shadow: 0 0 18px rgba(139,233,253,.16); }
 .card .badge { position: absolute; top: 8px; left: 8px; font-size: 10.5px; font-weight: 700; padding: 3px 8px; border-radius: 999px; backdrop-filter: blur(4px); background: rgba(0,0,0,.45); display: inline-flex; align-items: center; gap: 5px; }
 .card .fav { position: absolute; top: 7px; right: 8px; font-size: 15px; color: rgba(255,255,255,.55); cursor: pointer; }
 .card .fav.on { color: var(--yellow); }
@@ -211,6 +216,12 @@ input:not([type]), input[type=text], input[type=number], select { flex: 0 1 auto
 .binding-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .binding-head .idx { width: 22px; height: 22px; border-radius: 6px; background: var(--surface-2); display: grid; place-items: center; font-size: 12px; color: var(--muted); }
 .targets-pill { background: var(--bg-2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font-size: 12px; color: var(--muted); }
+.target-list { display: flex; flex-wrap: wrap; gap: 6px; margin-left: 120px; margin-top: -4px; margin-bottom: 4px; }
+.target-list.empty-targets { color: var(--comment); font-size: 12px; }
+.target-chip { max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--bg-2); border: 1px solid var(--line); border-radius: 999px; color: var(--muted); padding: 4px 9px; font-size: 11.5px; }
+.target-chip.light { color: var(--cyan); }
+.target-chip.switch { color: var(--green); }
+.target-chip.group { color: var(--purple); }
 .cov-num { font-size: 34px; font-weight: 800; color: var(--cyan); line-height: 1; margin: 4px 0 10px; }
 .cov-num span { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-top: 4px; }
 

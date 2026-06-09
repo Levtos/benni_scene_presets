@@ -26,12 +26,15 @@ function lookGradient(store, look) {
   const stops = colours.slice(0, 10);
   if (stops.length > 1) return `linear-gradient(135deg,${stops.join(",")})`;
   if (stops.length === 1) return `linear-gradient(135deg,${stops[0]},#00000055)`;
-  return gradientFor(look.slug || look.name);
+  return null;
 }
 
 function thumb(store, look) {
   if (look.img) return `<img src="/assets/${DOMAIN}/${esc(look.img)}" alt="">`;
-  return `<div style="width:100%;height:100%;background:${lookGradient(store, look)}"></div>`;
+  const gradient = lookGradient(store, look);
+  if (gradient) return `<div style="width:100%;height:100%;background:${gradient}"></div>`;
+  if ((look.bindings || []).length) return `<div class="look-generic-thumb"><span>⏻</span></div>`;
+  return `<div style="width:100%;height:100%;background:${gradientFor(look.slug || look.name)}"></div>`;
 }
 
 function lookCard(ctx, look) {

@@ -39,6 +39,15 @@ function bindingTargetIds(store, b) {
   return b.kind === "switch" ? b.entity_ids : store.expandList(b.entity_ids);
 }
 
+function targetChips(store, ids) {
+  const targets = [...new Set(ids || [])];
+  if (!targets.length) return `<div class="target-list empty-targets">No targets selected.</div>`;
+  return `<div class="target-list">${targets.map((id) => {
+    const kind = id.startsWith("switch.") ? "switch" : id.startsWith("light.") ? "light" : "group";
+    return `<span class="target-chip ${kind}" title="${esc(id)}">${esc(store.friendly(id))}</span>`;
+  }).join("")}</div>`;
+}
+
 function bindingRow(ctx, b, idx) {
   const { store } = ctx;
   const ids = bindingTargetIds(store, b);
@@ -77,6 +86,7 @@ function bindingRow(ctx, b, idx) {
       <span class="targets-pill">${n} ${isSwitch ? "switch" : "light"}${n === 1 ? "" : "s"}</span>
       <span class="btn sm" data-edit-targets="${idx}">Edit Targets</span>
     </div>
+    ${targetChips(store, b.entity_ids)}
   </div>`;
 }
 

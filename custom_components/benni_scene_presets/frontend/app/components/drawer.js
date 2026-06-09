@@ -9,7 +9,7 @@
 
 import { esc } from "../store.js";
 
-const CAP_TAG = { "RGB": "rgb", "CCT": "cct", "RGB+CCT": "rgbcct" };
+const CAP_TAG = { "RGB": "rgb", "CCT": "cct", "RGB+CCT": "rgbcct", "Switch": "switch" };
 
 export function renderDrawer(ctx) {
   const d = ctx.ui.drawer;

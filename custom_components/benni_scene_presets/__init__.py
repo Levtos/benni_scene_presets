@@ -228,6 +228,22 @@ async def async_setup(hass, config):
                     )
                 continue
 
+            if kind == "switch":
+                action = binding.get("action") or "turn_on"
+                if action not in ("turn_on", "turn_off"):
+                    action = "turn_on"
+                switch_targets = [
+                    eid for eid in ensure_list((binding.get("targets") or {}).get("entity_id"))
+                    if eid and eid.startswith("switch.")
+                ]
+                if switch_targets:
+                    hass.async_create_task(
+                        hass.services.async_call(
+                            "switch", action, {"entity_id": switch_targets}, blocking=False
+                        )
+                    )
+                continue
+
             light_entity_ids = _resolve(binding.get("targets", {}))
             if not light_entity_ids:
                 continue

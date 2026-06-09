@@ -92,6 +92,43 @@ def _normalize_categories(categories):
     return out
 
 
+def _target_id(item):
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        return str(item.get("id") or item.get("entity_id") or "").strip()
+    return ""
+
+
+def _normalize_target_ids(items, prefixes):
+    seen = set()
+    out = []
+    for item in items or []:
+        entity_id = _target_id(item)
+        if not entity_id or not any(entity_id.startswith(prefix) for prefix in prefixes):
+            continue
+        key = entity_id.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(entity_id)
+    return out
+
+
+def _normalize_targets(data):
+    raw = data.get("targets")
+    if not isinstance(raw, dict):
+        return {"configured": False, "lights": [], "switches": []}
+    return {
+        "configured": True,
+        "lights": _normalize_target_ids(
+            raw.get("lights"),
+            ("light.", "group.", "sensor.benni_light_group_"),
+        ),
+        "switches": _normalize_target_ids(raw.get("switches"), ("switch.",)),
+    }
+
+
 def reload_preset_data():
     """Rebuild the merged PRESET_DATA in place from bundled + custom presets.
 
@@ -113,6 +150,7 @@ def reload_preset_data():
         _normalize_categories(BUNDLED_DATA.get("categories", []))
         + [{**d, 'custom': True} for d in _normalize_categories(custom.get("categories", []))]
     )
+    PRESET_DATA["targets"] = _normalize_targets(custom)
     return PRESET_DATA
 
 
@@ -147,6 +185,24 @@ def save_categories(categories):
     _clear_missing_categories(AQARA_PATH, "aqara", allowed, reload_aqara)
 
     return {"categories": normalized}
+
+
+def list_targets():
+    return {"targets": _normalize_targets(_read_custom())}
+
+
+def save_targets(targets):
+    data = _read_custom()
+    data["targets"] = {
+        "lights": _normalize_target_ids(
+            (targets or {}).get("lights"),
+            ("light.", "group.", "sensor.benni_light_group_"),
+        ),
+        "switches": _normalize_target_ids((targets or {}).get("switches"), ("switch.",)),
+    }
+    _write_custom(data)
+    reload_preset_data()
+    return list_targets()
 
 
 def find_preset(ident):

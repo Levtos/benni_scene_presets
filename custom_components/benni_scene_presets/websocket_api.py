@@ -56,6 +56,14 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
 
     @websocket_api.websocket_command(
         {
+            vol.Required("type"): f"{DOMAIN}/list_targets",
+        }
+    )
+    def ws_list_targets(hass, connection, msg) -> None:
+        connection.send_result(msg["id"], file_utils.list_targets())
+
+    @websocket_api.websocket_command(
+        {
             vol.Required("type"): f"{DOMAIN}/save_categories",
             vol.Required("categories"): [str],
         }
@@ -67,6 +75,23 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
             file_utils.save_categories, msg["categories"]
         )
         async_dispatcher_send(hass, SIGNAL_LOOKS_CHANGED)
+        connection.send_result(msg["id"], saved)
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/save_targets",
+            vol.Required("targets"): {
+                vol.Optional("lights", default=[]): [str],
+                vol.Optional("switches", default=[]): [str],
+            },
+        }
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_save_targets(hass, connection, msg) -> None:
+        saved = await hass.async_add_executor_job(
+            file_utils.save_targets, msg["targets"]
+        )
         connection.send_result(msg["id"], saved)
 
     @websocket_api.websocket_command(
@@ -170,6 +195,8 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
                     # generic effect binding (advanced/fallback): raw service + data
                     vol.Optional("service"): vol.Any(str, None),
                     vol.Optional("data"): vol.Any(dict, None),
+                    # switch binding: action is turn_on or turn_off
+                    vol.Optional("action"): vol.Any(str, None),
                 }
             ],
         }
@@ -190,6 +217,9 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
                     binding["data"] = b["data"]
             elif kind == "off":
                 pass  # off binding: just targets, turned off on apply
+            elif kind == "switch":
+                action = b.get("action") or "turn_on"
+                binding["action"] = action if action in ("turn_on", "turn_off") else "turn_on"
             else:
                 binding["scene"] = b.get("scene")
                 if b.get("interval") is not None:
@@ -329,7 +359,9 @@ def async_setup_websocket_api(hass, dynamic_scene_manager) -> None:
     websocket_api.async_register_command(hass, ws_get_dynamic_scenes)
     websocket_api.async_register_command(hass, ws_list_presets)
     websocket_api.async_register_command(hass, ws_list_categories)
+    websocket_api.async_register_command(hass, ws_list_targets)
     websocket_api.async_register_command(hass, ws_save_categories)
+    websocket_api.async_register_command(hass, ws_save_targets)
     websocket_api.async_register_command(hass, ws_list_looks)
     websocket_api.async_register_command(hass, ws_save_preset)
     websocket_api.async_register_command(hass, ws_delete_preset)

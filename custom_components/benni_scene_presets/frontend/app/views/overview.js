@@ -6,7 +6,7 @@
 import { DOMAIN, esc } from "../store.js";
 import { gradientFor } from "../styles.js";
 
-const KIND_TAG = { rgb: ["RGB", "rgb"], cct: ["CCT", "cct"], rgbcct: ["RGB+CCT", "rgbcct"], off: ["Off", "off"], aqara: ["Aqara Ring", "aqara"], raw: ["Raw", ""] };
+const KIND_TAG = { rgb: ["RGB", "rgb"], cct: ["CCT", "cct"], rgbcct: ["RGB+CCT", "rgbcct"], off: ["Off", "off"], aqara: ["Aqara Ring", "aqara"], raw: ["Raw", ""], switch: ["Switch", "switch"] };
 const FILTERS = [["all", "All"], ["playing", "Playing"], ["ready", "Ready"], ["warning", "Needs attention"], ["fav", "Favorites"]];
 
 function thumb(look) {
@@ -33,6 +33,7 @@ function lookCard(ctx, look) {
       <div class="meta">
         <span>${info.bindingCount} binding${info.bindingCount === 1 ? "" : "s"}</span>
         <span>${info.lightCount} light${info.lightCount === 1 ? "" : "s"}</span>
+        ${info.switchCount ? `<span>${info.switchCount} switch${info.switchCount === 1 ? "" : "es"}</span>` : ""}
         ${look.category ? `<span>${esc(look.category)}</span>` : ""}
       </div>
       <div class="acts">
@@ -55,13 +56,17 @@ function detailPanel(ctx) {
 
   const bindings = (look.bindings || []).map((b) => {
     const [label, cls] = KIND_TAG[store.bindingKind(b)] || ["Scene", ""];
-    const source = b.scene || b.aqara || b.service || (b.kind === "off" ? "lights off" : "");
-    const n = store.expandList([].concat((b.targets && b.targets.entity_id) || [])).filter((x) => x.startsWith("light.")).length;
-    return `<div class="bind-row"><span class="tag ${cls}">${label}</span><span>${esc(source || "—")}</span><span class="t">${n} light${n === 1 ? "" : "s"}</span></div>`;
+    const source = b.kind === "switch" ? `switch.${b.action || "turn_on"}` : b.scene || b.aqara || b.service || (b.kind === "off" ? "lights off" : "");
+    const targets = [].concat((b.targets && b.targets.entity_id) || []);
+    const n = b.kind === "switch"
+      ? targets.filter((x) => x.startsWith("switch.")).length
+      : store.expandList(targets).filter((x) => x.startsWith("light.")).length;
+    const unit = b.kind === "switch" ? "switch" : "light";
+    return `<div class="bind-row"><span class="tag ${cls}">${label}</span><span>${esc(source || "—")}</span><span class="t">${n} ${unit}${n === 1 ? "" : unit === "switch" ? "es" : "s"}</span></div>`;
   }).join("") || `<div class="empty">No bindings.</div>`;
 
   const cap = info.caps;
-  const capChips = [["RGB", cap.rgb, "rgb"], ["CCT", cap.cct, "cct"], ["RGB+CCT", cap.rgbcct, "rgbcct"], ["Aqara Ring", cap.aqara, "aqara"], ["Off", cap.off, "off"]]
+  const capChips = [["RGB", cap.rgb, "rgb"], ["CCT", cap.cct, "cct"], ["RGB+CCT", cap.rgbcct, "rgbcct"], ["Aqara Ring", cap.aqara, "aqara"], ["Off", cap.off, "off"], ["Switch", cap.switch, "switch"]]
     .filter(([, n]) => n > 0).map(([l, n, c]) => `<span class="tag ${c}">${l} ·${n}</span>`).join(" ") || `<span class="tag">—</span>`;
 
   const check = (ok, text, warn) => `<div class="check ${ok ? "" : warn ? "warn" : "bad"}"><span class="mk">${ok ? "✓" : "✕"}</span>${text}</div>`;
@@ -78,6 +83,7 @@ function detailPanel(ctx) {
       ${check(info.checks.noDuplicates, info.duplicates ? `${info.duplicates} light(s) in multiple bindings` : "No duplicate targets")}
       ${check(info.checks.allSupported, info.unsupported ? `${info.unsupported} unsupported target(s)` : "All targets supported")}
       <div class="check"><span class="mk" style="color:var(--cyan)">◆</span>${info.lightCount} light${info.lightCount === 1 ? "" : "s"} covered</div>
+      ${info.switchCount ? `<div class="check"><span class="mk" style="color:var(--cyan)">◆</span>${info.switchCount} switch${info.switchCount === 1 ? "" : "es"} covered</div>` : ""}
     </div>
     <div class="section"><div class="h">Capability Summary</div><div>${capChips}</div></div>
     <div class="cta">

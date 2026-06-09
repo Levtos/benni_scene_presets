@@ -145,7 +145,7 @@ export const STYLES = `
 .bind-row .k { font-weight: 700; }
 .bind-row .t { margin-left: auto; color: var(--muted); font-size: 11.5px; }
 .tag { font-size: 10.5px; padding: 2px 7px; border-radius: 6px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
-.tag.rgb { color: var(--pink); } .tag.cct { color: var(--orange); } .tag.rgbcct { color: var(--cyan); } .tag.off { color: var(--comment); } .tag.aqara { color: var(--purple); }
+.tag.rgb { color: var(--pink); } .tag.cct { color: var(--orange); } .tag.rgbcct { color: var(--cyan); } .tag.off { color: var(--comment); } .tag.aqara { color: var(--purple); } .tag.switch { color: var(--green); }
 .check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 3px 0; color: var(--muted); }
 .check .mk { color: var(--green); } .check.bad .mk { color: var(--red); } .check.warn .mk { color: var(--yellow); }
 .detail .cta { display: flex; gap: 8px; margin-top: 16px; }

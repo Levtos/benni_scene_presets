@@ -6,6 +6,7 @@ export function render(ctx) {
   const s = ctx.store;
   const row = (k, v) => `<div class="bind-row"><span>${k}</span><span class="t">${v}</span></div>`;
   const categories = s.categories();
+  const targetMode = s.targetConfig.configured ? "managed" : "auto";
   const categoryRows = categories.length
     ? categories.map((c) => `<div class="bind-row"><span>${esc(c)}</span><span class="iconbtn" data-cat-del="${esc(c)}" title="Delete category">✕</span></div>`).join("")
     : `<div class="empty" style="padding:14px">No categories yet.</div>`;
@@ -27,6 +28,12 @@ export function render(ctx) {
         <div class="hint" style="margin-bottom:10px">Categories are shared by Looks, RGB/Kelvin Scenes and Aqara Ring Effects.</div>
         ${categoryRows}
       </div>
+      <div class="form-card">
+        <div class="h">Managed Targets</div>
+        <div class="hint" style="margin-bottom:10px">${targetMode === "auto" ? "Auto mode: all current light and switch entities are available until you save a managed target list." : "Managed mode: only selected targets are offered in the Look Composer."}</div>
+        <div class="bind-row"><span>Light targets</span><span class="t">${s.targetConfigCount("light")}</span><span class="btn sm" data-target-edit="lights">Configure</span></div>
+        <div class="bind-row"><span>Switch targets</span><span class="t">${s.targetConfigCount("switch")}</span><span class="btn sm" data-target-edit="switches">Configure</span></div>
+      </div>
     </div>
     <div class="form-card">
       <div class="h">Maintenance</div>
@@ -40,6 +47,7 @@ export function onClick(ctx, e) {
   let el;
   if ((el = e.target.closest("[data-cat-add]"))) { addCategory(ctx, el); return; }
   if ((el = e.target.closest("[data-cat-del]"))) { deleteCategory(ctx, el.dataset.catDel); return; }
+  if ((el = e.target.closest("[data-target-edit]"))) { openTargets(ctx, el.dataset.targetEdit); return; }
   if (!e.target.closest('[data-set="reset"]')) return;
   if (!confirm("Reset ALL custom scenes, looks and ring effects? This cannot be undone.")) return;
   ctx.hass.callService(DOMAIN, "reset_userdata", { delete_images: true })
@@ -74,4 +82,33 @@ async function deleteCategory(ctx, name) {
     await ctx.refresh();
     ctx.renderMain();
   } catch (err) { ctx.toast(`Delete failed: ${err.message || err}`); }
+}
+
+function openTargets(ctx, kind) {
+  const isSwitch = kind === "switches";
+  const current = ctx.store.targetConfig.configured
+    ? ctx.store.targetConfig[kind]
+    : (isSwitch ? ctx.store.autoSwitchTargetIds() : ctx.store.autoLightTargetIds());
+  ctx.openDrawer({
+    title: isSwitch ? "Managed Switch Targets" : "Managed Light Targets",
+    subtitle: isSwitch ? "Switches available to switch bindings." : "Lights and light groups available to look bindings.",
+    mode: isSwitch ? "switch_config" : "light_config",
+    selected: current,
+    apply: async (ids) => {
+      const targets = {
+        lights: kind === "lights" ? ids : ctx.store.targetConfig.lights,
+        switches: kind === "switches" ? ids : ctx.store.targetConfig.switches,
+      };
+      if (!ctx.store.targetConfig.configured) {
+        if (kind !== "lights") targets.lights = ctx.store.autoLightTargetIds();
+        if (kind !== "switches") targets.switches = ctx.store.autoSwitchTargetIds();
+      }
+      try {
+        await ctx.store.saveTargets(targets);
+        ctx.toast("Targets saved.");
+        await ctx.refresh();
+        ctx.renderMain();
+      } catch (err) { ctx.toast(`Save failed: ${err.message || err}`); }
+    },
+  });
 }

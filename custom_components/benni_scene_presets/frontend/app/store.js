@@ -32,6 +32,7 @@ export class Store {
     this.looks = [];
     this.aqara = [];
     this.categoryList = [];
+    this.targetConfig = { configured: false, lights: [], switches: [] };
     this.dynamic = [];    // running dynamic scenes
   }
 
@@ -43,10 +44,15 @@ export class Store {
       const d = await h.callWS({ type: `${DOMAIN}/list_presets` });
       this.presets = (d.presets || []).filter((p) => p.custom);
       this.categoryList = (d.categories || []).map((c) => typeof c === "string" ? c : c.name).filter(Boolean);
+      if (d.targets) this.targetConfig = this._normalizeTargetConfig(d.targets);
     } catch { this.presets = []; this.categoryList = []; }
     try {
       const d = await h.callWS({ type: `${DOMAIN}/list_categories` });
       this.categoryList = (d.categories || []).map((c) => typeof c === "string" ? c : c.name).filter(Boolean);
+    } catch {}
+    try {
+      const d = await h.callWS({ type: `${DOMAIN}/list_targets` });
+      this.targetConfig = this._normalizeTargetConfig(d.targets);
     } catch {}
     try { const d = await h.callWS({ type: `${DOMAIN}/list_looks` }); this.looks = d.looks || []; } catch { this.looks = []; }
     try { const d = await h.callWS({ type: `${DOMAIN}/list_aqara` }); this.aqara = d.aqara || []; } catch { this.aqara = []; }
@@ -73,6 +79,14 @@ export class Store {
     const categories = this.categories();
     if (current && !categories.includes(current)) categories.push(current);
     return categories.sort((a, b) => a.localeCompare(b));
+  }
+  _normalizeTargetConfig(targets) {
+    const t = targets || {};
+    return {
+      configured: !!t.configured,
+      lights: [...new Set((t.lights || []).filter((id) => this.isLightTargetId(id)))],
+      switches: [...new Set((t.switches || []).filter((id) => id && id.startsWith("switch.")))],
+    };
   }
 
   // A scene with more than one value runs as a dynamic loop; a single value paints once.
@@ -131,6 +145,46 @@ export class Store {
     return [...new Set(out)];
   }
 
+  isLightTargetId(id) {
+    return !!id && (id.startsWith("light.") || id.startsWith("group.") || id.startsWith("sensor.benni_light_group_"));
+  }
+  isSwitchTargetId(id) { return !!id && id.startsWith("switch."); }
+  autoLightTargetIds() {
+    const states = this.hass.states || {};
+    return Object.keys(states)
+      .filter((id) => this.isLightTargetId(id))
+      .sort();
+  }
+  autoSwitchTargetIds() {
+    const states = this.hass.states || {};
+    return Object.keys(states)
+      .filter((id) => this.isSwitchTargetId(id))
+      .sort();
+  }
+  managedTargetIds(kind) {
+    if (kind === "switch") {
+      return this.targetConfig.configured ? this.targetConfig.switches : this.autoSwitchTargetIds();
+    }
+    return this.targetConfig.configured ? this.targetConfig.lights : this.autoLightTargetIds();
+  }
+  targetConfigCount(kind) {
+    return this.managedTargetIds(kind).length;
+  }
+  availableTargetEntities(kind) {
+    const ids = kind === "switch" ? this.autoSwitchTargetIds() : this.autoLightTargetIds();
+    return ids.map((id) => this.targetEntry(id, kind === "switch"));
+  }
+  targetEntry(id, isSwitch = false) {
+    const group = !isSwitch && (id.startsWith("group.") || id.startsWith("sensor.benni_light_group_"));
+    return {
+      id,
+      label: this.friendly(id),
+      group,
+      cap: isSwitch ? "Switch" : (group ? "group" : this.capLabel(id)),
+      area: group ? "Groups" : this.area(id),
+    };
+  }
+
   // capability mode: "white" = CCT-only, "color" = has a colour mode, "all" = any.
   lightPasses(id, mode) {
     if (mode === "white") return this.hasCCT(id) && !this.hasColor(id);
@@ -144,13 +198,17 @@ export class Store {
   }
   // Lights/groups offered to a picker, filtered by capability mode.
   targetEntities(mode = "all") {
-    const states = this.hass.states || {};
-    const groups = Object.keys(states)
+    if (mode === "switch" || mode === "switch_config") {
+      const ids = mode === "switch_config" ? this.autoSwitchTargetIds() : this.managedTargetIds("switch");
+      return { groups: [], lights: ids.map((id) => this.targetEntry(id, true)) };
+    }
+    const ids = mode === "light_config" ? this.autoLightTargetIds() : this.managedTargetIds("light");
+    const groups = ids
       .filter((id) => (id.startsWith("group.") || id.startsWith("sensor.benni_light_group_")) && this.groupPasses(id, mode))
-      .sort().map((id) => ({ id, label: this.friendly(id), group: true, area: "Groups" }));
-    const lights = Object.keys(states)
+      .sort().map((id) => this.targetEntry(id));
+    const lights = ids
       .filter((id) => id.startsWith("light.") && this.lightPasses(id, mode))
-      .sort().map((id) => ({ id, label: this.friendly(id), cap: this.capLabel(id), area: this.area(id) }));
+      .sort().map((id) => this.targetEntry(id));
     return { groups, lights };
   }
   // Capability mode a scene binding wants, derived from the bound scene.
@@ -173,6 +231,7 @@ export class Store {
   bindingKind(b) {
     const k = b.kind || "scene";
     if (k === "off") return "off";
+    if (k === "switch") return "switch";
     if (k === "aqara") return "aqara";
     if (k === "effect") return "raw";
     const p = this.findPreset(b.scene || b.scene_id);
@@ -183,15 +242,22 @@ export class Store {
   lookInfo(look) {
     const bindings = look.bindings || [];
     const seen = new Map();
-    const caps = { rgb: 0, cct: 0, rgbcct: 0, off: 0, aqara: 0, raw: 0 };
+    const caps = { rgb: 0, cct: 0, rgbcct: 0, off: 0, aqara: 0, raw: 0, switch: 0 };
     let unsupported = 0;
     const allLights = new Set();
+    const allSwitches = new Set();
 
     for (const b of bindings) {
       const kind = this.bindingKind(b);
       caps[kind] = (caps[kind] || 0) + 1;
-      const lights = this.expandList((b.targets && [].concat(b.targets.entity_id || [])) || (b.entity_ids || []));
-      for (const id of lights) {
+      const rawTargets = (b.targets && [].concat(b.targets.entity_id || [])) || (b.entity_ids || []);
+      const targets = kind === "switch" ? rawTargets : this.expandList(rawTargets);
+      for (const id of targets) {
+        if (id.startsWith("switch.")) {
+          allSwitches.add(id);
+          seen.set(id, (seen.get(id) || 0) + 1);
+          continue;
+        }
         if (!id.startsWith("light.")) continue;
         allLights.add(id);
         seen.set(id, (seen.get(id) || 0) + 1);
@@ -207,6 +273,7 @@ export class Store {
     return {
       bindingCount: bindings.length,
       lightCount: allLights.size,
+      switchCount: allSwitches.size,
       duplicates, unsupported, caps, status,
       checks: {
         noDuplicates: duplicates === 0,
@@ -263,6 +330,7 @@ export class Store {
   saveAqara(payload) { return this.hass.callWS({ type: `${DOMAIN}/save_aqara`, ...payload }); }
   deleteAqara(slug) { return this.hass.callWS({ type: `${DOMAIN}/delete_aqara`, slug }); }
   saveCategories(categories) { return this.hass.callWS({ type: `${DOMAIN}/save_categories`, categories }); }
+  saveTargets(targets) { return this.hass.callWS({ type: `${DOMAIN}/save_targets`, targets }); }
 
   // Aqara preset options read live from the AAL service schema (if installed).
   aqaraPresetOptions(service) {

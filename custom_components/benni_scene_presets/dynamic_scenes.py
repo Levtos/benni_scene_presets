@@ -155,6 +155,21 @@ class DynamicSceneManager:
         for scene_id in scenes_to_delete:
             del self.dynamic_scenes[scene_id]
 
+    def stop_all_for_look(self, look_slug):
+        if not look_slug:
+            return
+
+        self.mark_look_inactive(look_slug)
+        scenes_to_delete = []
+
+        for scene in self.dynamic_scenes.values():
+            if scene.parameters.get("look") == look_slug:
+                scene.stop_loop()
+                scenes_to_delete.append(scene.id)
+
+        for scene_id in scenes_to_delete:
+            del self.dynamic_scenes[scene_id]
+
     def is_look_active(self, look_slug):
         """True if the look was applied (and not stopped), or any of its scenes run."""
         if look_slug in self.active_looks:

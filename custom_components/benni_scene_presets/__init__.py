@@ -164,7 +164,9 @@ async def async_setup(hass, config):
 
         look = file_utils.get_look(look_ident)
         if not look:
-            raise vol.Invalid(f"Look '{look_ident}' not found.")
+            _LOGGER.warning("Look '%s' not found; apply_look skipped", look_ident)
+            dynamic_scene_manager.stop_all_for_look(look_ident)
+            return {"dynamic_scenes": [], "look_found": False}
 
         look_slug = look.get("slug")
         look_transition = look.get("transition")  # look-level default crossfade (s)
@@ -270,11 +272,13 @@ async def async_setup(hass, config):
         return {"dynamic_scenes": started}
 
     async def stop_look(call):
-        look = file_utils.get_look(call.data.get(ATTR_LOOK_ID))
+        look_ident = call.data.get(ATTR_LOOK_ID)
+        look = file_utils.get_look(look_ident)
         if not look:
+            dynamic_scene_manager.stop_all_for_look(look_ident)
             return
 
-        dynamic_scene_manager.mark_look_inactive(look.get("slug"))
+        dynamic_scene_manager.stop_all_for_look(look.get("slug"))
         effect_off = []
         for binding in look.get("bindings", []):
             kind = binding.get("kind")
@@ -289,9 +293,6 @@ async def async_setup(hass, config):
             elif kind == "effect":
                 # Best-effort: turn the effect targets (e.g. the RGB ring) off.
                 effect_off += _resolve(binding.get("targets", {}))
-            else:
-                for light_entity_id in _resolve(binding.get("targets", {})):
-                    dynamic_scene_manager.stop_all_for_entity_id(light_entity_id)
 
         if effect_off:
             hass.async_create_task(

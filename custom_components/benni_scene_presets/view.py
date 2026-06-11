@@ -108,6 +108,10 @@ async def async_setup_view(hass):
 
     # The regular panel now serves the new modular UX directly. (The classic
     # panel JS is still served above as a fallback, but isn't registered.)
+    # Idempotent: ein evtl. noch registriertes Panel zuerst still entfernen
+    # (z.B. Setup nach Reload/HACS-Update ohne sauberes Unload), sonst wirft
+    # async_register_built_in_panel "Overwriting panel benni_scene_presets".
+    async_remove_panel(hass, "benni_scene_presets", warn_if_unknown=False)
     async_register_built_in_panel(
         hass,
         component_name="custom",

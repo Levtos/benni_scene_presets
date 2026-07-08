@@ -83,7 +83,8 @@ class DynamicScene:
             return
         self._running = True
         self._task = self.hass.create_task(self._loop())
-        self._task.add_done_callback(self._task_done)
+        if hasattr(self._task, "add_done_callback"):
+            self._task.add_done_callback(self._task_done)
 
     def stop_loop(self):
         self._running = False

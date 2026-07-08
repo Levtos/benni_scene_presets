@@ -45,6 +45,14 @@ class _Hass:
         return asyncio.create_task(coro)
 
 
+class _NoneTaskHass:
+    states = _States()
+
+    def create_task(self, coro):
+        coro.close()
+        return None
+
+
 def test_async_stop_all_cancels_awaits_and_clears_dynamic_scene_tasks(monkeypatch):
     calls = []
 
@@ -81,3 +89,25 @@ def test_async_stop_all_cancels_awaits_and_clears_dynamic_scene_tasks(monkeypatc
         assert task.done()
 
     asyncio.run(run())
+
+
+def test_start_loop_skips_done_callback_when_create_task_returns_none(monkeypatch):
+    async def fake_apply_preset(*_args, **_kwargs):
+        raise AssertionError("loop must not run in this regression test")
+
+    monkeypatch.setattr(dynamic_scenes, "apply_preset", fake_apply_preset)
+
+    manager = dynamic_scenes.DynamicSceneManager()
+    created = manager.create_new(
+        _NoneTaskHass(),
+        {
+            "light_entity_ids": ["light.test"],
+            dynamic_scenes.ATTR_SCENE_PRESET_ID: "preset",
+        },
+        interval=3600,
+    )
+
+    scene = next(iter(manager.dynamic_scenes.values()))
+    assert created["running"] is True
+    assert scene._running is True
+    assert scene._task is None

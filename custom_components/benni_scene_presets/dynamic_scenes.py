@@ -1,6 +1,7 @@
 import uuid
 import asyncio
 import logging
+from contextlib import suppress
 from .presets import apply_preset
 from .const import *
 
@@ -22,68 +23,92 @@ class DynamicScene:
     async def _loop(self):
         run_count = 0
 
-        while self._running:
-            light_entity_ids = self.parameters.get("light_entity_ids")
-            transition = self.parameters.get(ATTR_TRANSITION)
-            smart_shuffle = True
+        try:
+            while self._running:
+                light_entity_ids = self.parameters.get("light_entity_ids")
+                transition = self.parameters.get(ATTR_TRANSITION)
+                smart_shuffle = True
 
-            if run_count == 0:
-                # Upstream hard-codes transition = 0.5 here, which snaps the
-                # lights on the first paint and breaks crossfades from a
-                # previous scene. Honour an explicit initial_transition if
-                # given, otherwise keep the requested transition for a smooth
-                # first paint.
-                initial_transition = self.parameters.get(ATTR_INITIAL_TRANSITION)
-                if initial_transition is not None:
-                    transition = initial_transition
-                # smart_shuffle stays off on the first run so the initial colour
-                # assignment is deterministic (intentional upstream behaviour).
-                smart_shuffle = False
-            else:
-                entity_states = [
-                    self.hass.states.get(x)
-                    for x in light_entity_ids
-                    if x is not None
-                ]
-                lights_on = len([x for x in entity_states if x.state == "on"])
-
-                if lights_on == 0:
-                    self._running = False
-                    self.self_destruct_callback(self.id)
-                    return
+                if run_count == 0:
+                    # Upstream hard-codes transition = 0.5 here, which snaps the
+                    # lights on the first paint and breaks crossfades from a
+                    # previous scene. Honour an explicit initial_transition if
+                    # given, otherwise keep the requested transition for a smooth
+                    # first paint.
+                    initial_transition = self.parameters.get(ATTR_INITIAL_TRANSITION)
+                    if initial_transition is not None:
+                        transition = initial_transition
+                    # smart_shuffle stays off on the first run so the initial colour
+                    # assignment is deterministic (intentional upstream behaviour).
+                    smart_shuffle = False
                 else:
-                    # The user probably purposefully turned off parts of the lights, so if one is off, we ignore it
-                    light_entity_ids = [
-                        entity_id for entity_id, state in zip(light_entity_ids, entity_states)
-                        if state and state.state == "on"
+                    entity_states = [
+                        self.hass.states.get(x)
+                        for x in light_entity_ids
+                        if x is not None
                     ]
+                    lights_on = len([x for x in entity_states if x.state == "on"])
+
+                    if lights_on == 0:
+                        self._running = False
+                        self.self_destruct_callback(self.id)
+                        return
+                    else:
+                        # The user probably purposefully turned off parts of the lights, so if one is off, we ignore it
+                        light_entity_ids = [
+                            entity_id for entity_id, state in zip(light_entity_ids, entity_states)
+                            if state and state.state == "on"
+                        ]
 
 
-            await apply_preset(
-                self.hass,
-                self.parameters.get(ATTR_SCENE_PRESET_ID),
-                light_entity_ids,
-                transition,
-                self.parameters.get(ATTR_SHUFFLE),
-                smart_shuffle,
-                self.parameters.get(ATTR_BRIGHTNESS, None),
-                step=run_count,  # advances a Kelvin scene's sweep through its values
-            )
-            run_count += 1
+                await apply_preset(
+                    self.hass,
+                    self.parameters.get(ATTR_SCENE_PRESET_ID),
+                    light_entity_ids,
+                    transition,
+                    self.parameters.get(ATTR_SHUFFLE),
+                    smart_shuffle,
+                    self.parameters.get(ATTR_BRIGHTNESS, None),
+                    step=run_count,  # advances a Kelvin scene's sweep through its values
+                )
+                run_count += 1
 
-            await asyncio.sleep(self.interval)
+                await asyncio.sleep(self.interval)
+        except asyncio.CancelledError:
+            self._running = False
+            raise
 
     def start_loop(self):
         if self._running:
             return
         self._running = True
         self._task = self.hass.create_task(self._loop())
+        self._task.add_done_callback(self._task_done)
 
     def stop_loop(self):
+        self._running = False
         if self._task:
             self._task.cancel()
 
+    async def async_stop_loop(self):
+        task = self._task
+        self.stop_loop()
+        if task:
+            with suppress(asyncio.CancelledError):
+                await task
+            if self._task is task:
+                self._task = None
+
+    def _task_done(self, task):
+        if self._task is task:
+            self._task = None
         self._running = False
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            _LOGGER.exception("DynamicScene task failed")
 
     def to_dict(self):
         return {
@@ -154,6 +179,15 @@ class DynamicSceneManager:
 
         for scene_id in scenes_to_delete:
             del self.dynamic_scenes[scene_id]
+
+    async def async_stop_all(self):
+        self.active_looks.clear()
+        scenes = list(self.dynamic_scenes.values())
+        self.dynamic_scenes.clear()
+        await asyncio.gather(
+            *(scene.async_stop_loop() for scene in scenes),
+            return_exceptions=True,
+        )
 
     def stop_all_for_look(self, look_slug):
         if not look_slug:

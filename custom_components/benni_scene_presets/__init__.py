@@ -2,7 +2,8 @@ import voluptuous as vol
 import homeassistant.helpers.config_validation as cv
 import asyncio
 import logging
-from homeassistant.core import HomeAssistant, SupportsResponse
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import Event, HomeAssistant, SupportsResponse
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from .const import *
@@ -415,6 +416,16 @@ async def async_setup_entry(
 ) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
+    async def _async_stop_dynamic_scenes(_event: Event) -> None:
+        await dynamic_scene_manager.async_stop_all()
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_STOP,
+            _async_stop_dynamic_scenes,
+        )
+    )
+
     await async_setup_view(hass)
 
     async_setup_websocket_api(hass, dynamic_scene_manager)
@@ -426,6 +437,7 @@ async def async_setup_entry(
 async def async_unload_entry(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> bool:
+    await dynamic_scene_manager.async_stop_all()
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         # Panel beim Unload entfernen, sonst wirft das nächste Setup (Reload/HACS-
